@@ -1,0 +1,23 @@
+{
+  "name": "galtea",
+  "displayName": "Galtea",
+  "version": "1.0.0",
+  "description": "Skills for working with the Galtea Platform — query and manage products, versions, endpoint connections, evaluations, and more.",
+  "author": {
+    "name": "Galtea AI",
+    "email": "support@galtea.ai"
+  },
+  "homepage": "https://galtea.ai",
+  "repository": "https://github.com/Galtea-AI/skills",
+  "license": "MIT",
+  "keywords": [
+    "galtea",
+    "llm",
+    "evaluation",
+    "testing",
+    "ai-quality"
+  ],
+  "category": "developer-tools",
+  "logo": "assets/logo.png",
+  "skills": "./skills/"
+}

@@ -1,0 +1,58 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+.envrc
+secrets/
+credentials/
+*.key
+*.pem
+*.p12
+*.pfx
+*.cer
+
+# API keys / tokens (catch accidental files)
+*api_key*
+*api-key*
+*secret*
+*.token
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor & IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log
+.pnpm-debug.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+
+# Temp / build artifacts
+*.tmp
+*.bak
+*.orig
+.cache/
