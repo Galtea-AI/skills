@@ -1,377 +1,183 @@
 ---
 name: galtea
-description: Interact with the Galtea API. Use when needing to (1) read or write Galtea resources programmatically — products, versions, endpoint connections, tests, metrics, evaluations, sessions, traces, and more, (2) trigger and monitor evaluation runs, or (3) set up a new product version with its endpoint connection.
+description: Help users interact with the Galtea platform — the AI product testing and evaluation platform for AI/LLM products. Covers authentication, managing products/versions/specifications/tests/metrics/endpoint-connections/evaluations/sessions/inference-results/traces, and wiring an AI product into Galtea for automated testing.
+when_to_use: Invoke when the user mentions Galtea, asks to run or inspect an evaluation, wants to create a product/version/test/metric, needs to debug a failed session or inference, or is trying to connect their AI product to Galtea's testing platform. Trigger phrases include "galtea", "run evaluation", "gsk_...", "testing my AI product", "list my products", "create a test".
+allowed-tools: WebFetch Bash(curl *) Bash(jq *) Bash(grep *) Bash(cat *) Bash(ls *) Bash(stat *) Bash(mkdir *) Bash(chmod *) Bash(test *) Bash(date *) Bash(find *) Bash(rm *) Bash(echo *) Bash(printf *) Bash(tee *) Bash(env *) Bash(awk *) Bash(sed *) Bash(head *) Bash(tail *) Bash(wc *) Bash(sort *) Bash(uniq *) Bash(xmllint *)
 ---
 
 # Galtea
 
-This skill helps you interact with the Galtea Platform API directly via `curl`. Use it to manage AI product evaluation workflows, inspect results, and set up product versions.
+Galtea is an AI product testing and evaluation platform. Teams use it to define behavioral specifications, generate test datasets, run evaluations (AI-as-judge, deterministic, or human), and iterate their AI products toward production with confidence. Entities follow a hierarchy — `Product → Version → Session → Inference Result → Trace` — with `Test` / `TestCase`, `Metric`, `Specification`, and `EndpointConnection` as companion resources attached to a Product.
 
-## Core Principles
+This skill helps the agent drive the Galtea REST API on behalf of the user: authenticate, discover the right docs and endpoints, then run or inspect evaluations. Source-of-truth details live in the OpenAPI spec and the docs; this file points at them rather than duplicating them.
 
-1. **Always resolve IDs first.** Most create/list operations require IDs (productId, versionId, testId, metricId). Use list endpoints to discover them before acting.
-2. **Evaluations are async.** After triggering, poll `GET /evaluations/{id}` until `status` is `SUCCESS` or `FAILED`.
-3. **Endpoint connections must be tested before use.** Use `POST /endpointConnections/testConnection` to validate before linking to a version.
-4. **Soft deletes everywhere.** Deleted resources have `deletedAt` set — they are not permanently removed. List endpoints exclude them by default.
+If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, then `/sdk/tutorials/writing-specifications`, then `/sdk/tutorials/run-test-based-evaluations` — the shortest zero-to-evaluation path.
 
-## Auth & Base URL
+## Core Rules
 
-```bash
-export GALTEA_API_KEY=gsk_...      # found in Galtea dashboard → Settings → API Keys
-export GALTEA_BASE_URL=https://api.galtea.ai
-```
+1. **Authenticate before any API call.** If `$GALTEA_API_KEY` is unset and no key is cached at `~/.galtea/api-key`, run the Authentication flow. Never hit the API without a key resolved.
+2. **Use the docs sitemap to find pages — do not guess URLs.** The sitemap at `$GALTEA_DOCS_URL/sitemap.xml` lists every docs page. When the user asks about a concept, a workflow, or an endpoint, fetch the sitemap once per session, grep it for the relevant prefix (`/concepts/*`, `/sdk/tutorials/*`, `/api-reference/*`), and fetch only the pages you actually need.
+3. **The OpenAPI spec is the source of truth for endpoint shapes.** Fetch `$GALTEA_API_URL/openapi.json` (OpenAPI 3.0, ~900 KB, security scheme `bearerAuth`) and consult it for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
+4. **Rely on the docs for workflows and concepts.** For end-to-end playbooks (setting up a product, simulating conversations, tracing an agent, human evaluation, production monitoring), read a page under `/sdk/tutorials/*`. For entity definitions and the hierarchy between them, read `/concepts/*`. Treat the docs as canonical over anything inlined here.
+5. **Filter query params are usually plural** (`productIds`, `versionIds`, `testIds`, `metricIds`, `inferenceResultIds`), though a few endpoints accept singular. When in doubt, check `parameters` for the endpoint in `openapi.json` before guessing.
+6. **Evaluations are async.** After `POST /evaluations`, poll `GET /evaluations/{id}` until `status` leaves `PENDING`.
+7. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
 
-All requests use Bearer auth:
+## Environment
 
-```bash
--H "Authorization: Bearer $GALTEA_API_KEY" \
--H "Content-Type: application/json"
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `GALTEA_API_URL` | `https://api.galtea.ai` | Base URL for API calls and the OpenAPI spec. Override to `https://dev.api.galtea.ai` for Galtea's development environment. |
+| `GALTEA_DOCS_URL` | `https://docs.galtea.ai` | Base URL for docs, the sitemap, and the changelog. |
+| `GALTEA_API_KEY` | *(unset — see Authentication)* | `gsk_*` bearer token scoped to the user's Galtea organization. |
 
----
+The changelog at `$GALTEA_DOCS_URL/changelog` lists every new metric, endpoint, and feature by date — consult it when the user asks about something recent.
 
-## Common Workflows
+**Shell assumption.** The snippets in this skill target a POSIX shell (macOS, Linux, WSL, Git Bash). They rely on `jq`, `grep`, `stat`, `chmod`, and Bash substitutions that don't work in native PowerShell or `cmd`. Windows users on native PowerShell should install WSL or Git Bash, or switch to the Python SDK — install instructions at **https://docs.galtea.ai/sdk/installation** — which is fully cross-platform.
 
-### 1. Run an evaluation
+## Authentication
 
-```bash
-# Step 1 — find your product
-curl -s "$GALTEA_BASE_URL/products" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name}'
+Galtea uses bearer-token auth. Every request includes `-H "Authorization: Bearer $GALTEA_API_KEY"`.
 
-# Step 2 — find the version to evaluate
-curl -s "$GALTEA_BASE_URL/versions?productIds=<productId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name}'
-
-# Step 3 — find a test dataset
-curl -s "$GALTEA_BASE_URL/tests?productIds=<productId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name, status, type}'
-
-# Step 4 — find metrics
-curl -s "$GALTEA_BASE_URL/metrics" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name, source}'
-
-# Step 5 — trigger evaluation (one POST per metric)
-curl -s -X POST "$GALTEA_BASE_URL/evaluations" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "versionId": "<versionId>",
-    "testId": "<testId>",
-    "metricId": "<metricId>"
-  }' | jq '{id, status}'
-
-# Step 6 — poll until done
-curl -s "$GALTEA_BASE_URL/evaluations/<evalId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '{id, status, score, reason}'
-```
-
-### 2. Create a new product version with an endpoint connection
+**Whenever you're about to make a Galtea API call**, start the bash call with this resolver block — it fills in defaults for the URL vars and loads the cached key, so the rest of the call can use `$GALTEA_API_URL`, `$GALTEA_DOCS_URL`, and `$GALTEA_API_KEY` freely:
 
 ```bash
-# Step 1 — create the version
-curl -s -X POST "$GALTEA_BASE_URL/versions" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "productId": "<productId>",
-    "name": "v1.2.0",
-    "description": "Optional description",
-    "systemPrompt": "You are a helpful assistant."
-  }' | jq '{id, name}'
-
-# Step 2 — create the endpoint connection
-curl -s -X POST "$GALTEA_BASE_URL/endpointConnections" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "productId": "<productId>",
-    "name": "My API",
-    "url": "https://your-api.com/v1/chat",
-    "httpMethod": "POST",
-    "authType": "BEARER",
-    "authToken": "<your-api-token>",
-    "type": "CONVERSATION",
-    "inputTemplate": "{\"messages\": [{\"role\": \"user\", \"content\": \"{{ input.user_message }}\"}]}",
-    "outputMapping": { "output": "$.choices[0].message.content" }
-  }' | jq '{id, name}'
-
-# Step 3 — test the connection before linking
-curl -s -X POST "$GALTEA_BASE_URL/endpointConnections/testConnection" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "endpointConnectionId": "<connectionId>",
-    "input": { "user_message": "Hello, are you working?" }
-  }' | jq '.'
-
-# Step 4 — link connection to version
-curl -s -X PATCH "$GALTEA_BASE_URL/versions/<versionId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{ "conversationEndpointConnectionId": "<connectionId>" }' | jq '{id, name}'
+GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
+GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
+GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key 2>/dev/null)}"
 ```
 
-### 3. Debug a failed evaluation
+If that leaves `$GALTEA_API_KEY` empty, run the paste-and-validate flow below. Claude Code's Bash tool resets shell state between calls, so you must run this resolver at the top of every Galtea bash call — do not assume a prior `export` persists.
 
-There are two distinct failure types — check both:
-- **Metric failure**: evaluation ran successfully but `score=0`. Filter evaluations by `score` after listing.
-- **Execution failure**: evaluation could not run at all. Look for `status=FAILED` on sessions/inferenceResults.
+### First-time paste flow
+
+When no key is available:
+
+1. Tell the user: *"Open the Galtea Dashboard at https://platform.galtea.ai → **Settings → API Keys** → create (or copy) a key starting with `gsk_`. Paste it in the chat as plain text."*
+2. Receive the pasted value as sensitive free-text. Do **not** use `AskUserQuestion` for this — pasting secrets into option metadata leaks them into logs.
+3. Persist the key to `~/.galtea/api-key` with owner-only permissions (standard credential-file pattern):
+   ```bash
+   mkdir -p ~/.galtea && printf '%s' "$PASTED_KEY" > ~/.galtea/api-key && chmod 600 ~/.galtea/api-key
+   ```
+4. Validate by hitting the credit-free `/organizations` endpoint (reads never consume credits) — run the resolver block (above), then:
+   ```bash
+   curl -s -H "Authorization: Bearer $GALTEA_API_KEY" "$GALTEA_API_URL/organizations" \
+     | jq '.data[0] | {id, name, remainingSubscriptionCredits, extraCredits}'
+   ```
+5. On success, report the organization name and remaining credits to the user. On `401`, tell them the key is invalid and loop back to step 1 (up to 3 tries before giving up).
+
+### On 401 from a previously cached key
+
+The key was rotated or revoked. Clear the cache and re-run the paste flow:
 
 ```bash
-# Find metric failures for a version (status=SUCCESS but score=0)
-curl -s "$GALTEA_BASE_URL/evaluations?versionIds=<versionId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | select(.score == 0) | {id, score, reason, sessionId}'
-
-# List sessions for a version (find execution failures)
-curl -s "$GALTEA_BASE_URL/sessions?versionId=<versionId>&status=FAILED" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.data[] | {id, status, error}'
-
-# Get inference results for a session
-curl -s "$GALTEA_BASE_URL/inferenceResults?sessionId=<sessionId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.data[] | {id, status, actualOutput, error}'
-
-# Get traces for an inference result (tool calls, RAG spans, LLM generations)
-# NOTE: use plural inferenceResultIds (singular is rejected)
-# NOTE: traces return a plain array [], not {data: []}
-# NOTE: trace input/output/attributes may be null even when the trace exists
-curl -s "$GALTEA_BASE_URL/traces?inferenceResultIds=<inferenceResultId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, type, name, error, latencyMs}'
+rm -f ~/.galtea/api-key
 ```
 
----
+## Discover docs and endpoints
 
-## Resource Reference
+Both the sitemap and the OpenAPI spec are large; cache them under `/tmp` with a 24-hour TTL so you don't re-download each turn. Prepend the resolver block from Authentication to every bash call below (auth key is not strictly required for these unauthenticated fetches, but the URL defaults are).
 
-### Products
+### Docs sitemap
 
 ```bash
-# List
-curl -s "$GALTEA_BASE_URL/products" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name}'
+GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
 
-# Get
-curl -s "$GALTEA_BASE_URL/products/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.'
+# Refresh if missing or older than 24h
+if [ ! -f /tmp/galtea-sitemap.xml ] || \
+   [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-sitemap.xml 2>/dev/null || echo 0) )) -gt 86400 ]; then
+  curl -s "$GALTEA_DOCS_URL/sitemap.xml" > /tmp/galtea-sitemap.xml
+fi
 
-# Create
-curl -s -X POST "$GALTEA_BASE_URL/products" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "My AI Product",
-    "description": "What the product does, its capabilities and limitations."
-  }' | jq '{id, name}'
+# Find the URL set you need, then pick one
+grep -oE 'https://[^<]+/sdk/tutorials/[^<]+'  /tmp/galtea-sitemap.xml   # 13 tutorials
+grep -oE 'https://[^<]+/concepts/[^<]+'       /tmp/galtea-sitemap.xml   # concept pages
+grep -oE 'https://[^<]+/api-reference/[^<]+'  /tmp/galtea-sitemap.xml   # per-endpoint docs
 
-# Update
-curl -s -X PATCH "$GALTEA_BASE_URL/products/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{ "description": "Updated description" }' | jq '{id, name}'
+# Fetch one specific page
+curl -s "$GALTEA_DOCS_URL/sdk/tutorials/run-test-based-evaluations"
 ```
 
-### Versions
+### OpenAPI spec
 
 ```bash
-# List (filter by product)
-curl -s "$GALTEA_BASE_URL/versions?productIds=<productId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name, createdAt}'
+GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
 
-# Get
-curl -s "$GALTEA_BASE_URL/versions/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.'
+# Refresh if missing or older than 24h
+if [ ! -f /tmp/galtea-openapi.json ] || \
+   [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-openapi.json 2>/dev/null || echo 0) )) -gt 86400 ]; then
+  curl -s "$GALTEA_API_URL/openapi.json" > /tmp/galtea-openapi.json
+fi
 
-# Create
-curl -s -X POST "$GALTEA_BASE_URL/versions" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "productId": "<productId>",
-    "name": "v1.0.0",
-    "description": "Initial release",
-    "systemPrompt": "You are a helpful assistant."
-  }' | jq '{id, name}'
-
-# Update
-curl -s -X PATCH "$GALTEA_BASE_URL/versions/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{ "conversationEndpointConnectionId": "<connectionId>" }' | jq '{id}'
+jq '.paths | keys[]'                 /tmp/galtea-openapi.json   # every endpoint path
+jq '.paths."/evaluations".post'      /tmp/galtea-openapi.json   # full POST /evaluations spec
+jq '.components.schemas.Evaluation'  /tmp/galtea-openapi.json   # reusable schema
+jq '.components.securitySchemes'     /tmp/galtea-openapi.json   # auth schemes
 ```
 
-Key fields: `productId` (required), `name` (required), `systemPrompt`, `description`, `conversationEndpointConnectionId`, `initializationEndpointConnectionId`, `finalizationEndpointConnectionId`.
+**OpenAPI 3.0 in one paragraph.** `.paths.<path>.<method>` describes one operation (its `parameters`, `requestBody`, `responses`). Request/response shapes use `$ref` pointers into `.components.schemas.<Name>`. Resolve references with `jq` incrementally — the full spec is ~900 KB and loading it all blows your context.
 
-### Endpoint Connections
+## Worked example — run a quality evaluation
+
+End-to-end flow. Each numbered step runs in its own bash call, so start every call with the resolver block from the Authentication section (omitted below for brevity):
 
 ```bash
-# List (filter by product)
-curl -s "$GALTEA_BASE_URL/endpointConnections?productId=<productId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.data[] | {id, name, url, type}'
-
-# Get
-curl -s "$GALTEA_BASE_URL/endpointConnections/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.'
-
-# Create
-curl -s -X POST "$GALTEA_BASE_URL/endpointConnections" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "productId": "<productId>",
-    "name": "Production API",
-    "url": "https://your-api.com/chat",
-    "httpMethod": "POST",
-    "authType": "BEARER",
-    "authToken": "<token>",
-    "type": "CONVERSATION",
-    "inputTemplate": "{\"messages\": [{\"role\": \"user\", \"content\": \"{{ input.user_message }}\"}]}",
-    "outputMapping": { "output": "$.choices[0].message.content" },
-    "timeout": 60
-  }' | jq '{id, name}'
-
-# Test connection
-curl -s -X POST "$GALTEA_BASE_URL/endpointConnections/testConnection" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "endpointConnectionId": "<id>",
-    "input": { "user_message": "ping" }
-  }' | jq '.'
-
-# Update
-curl -s -X PATCH "$GALTEA_BASE_URL/endpointConnections/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{ "url": "https://new-url.com/chat" }' | jq '{id, name}'
+# Resolver (run this at the top of every Galtea bash call)
+GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
+GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
+GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key)}"
 ```
-
-`authType` values: `NONE`, `BEARER`, `API_KEY`, `BASIC`, `OAUTH2`.
-`type` values: `INITIALIZATION`, `CONVERSATION`, `FINALIZATION`.
-`inputTemplate` must contain `{{ input.user_message }}`.
-
-### Tests
 
 ```bash
-# List (filter by product)
-curl -s "$GALTEA_BASE_URL/tests?productIds=<productId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name, type, status}'
+# 1. Find the product
+curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
+  "$GALTEA_API_URL/products" | jq '.[] | {id, name}'
 
-# Get with test cases
-curl -s "$GALTEA_BASE_URL/tests/<id>/testCases" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.data[] | {id, input, expectedOutput}'
+# 2. Find the version to evaluate
+curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
+  "$GALTEA_API_URL/versions?productIds=<productId>" | jq '.[] | {id, name}'
 
-# Create (Galtea generates test cases automatically)
-curl -s -X POST "$GALTEA_BASE_URL/tests" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "productId": "<productId>",
-    "name": "Quality test",
-    "type": "QUALITY",
-    "variants": ["rag"],
-    "maxTestCases": 20
-  }' | jq '{id, name, status}'
+# 3. Find a ready test dataset (status must be SUCCESS)
+curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
+  "$GALTEA_API_URL/tests?productIds=<productId>" | jq '.[] | {id, name, type, status}'
+
+# 4. Find a metric
+curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
+  "$GALTEA_API_URL/metrics" | jq '.[] | {id, name, source}'
+
+# 5. Trigger the evaluation (one POST per metric × version × test combo)
+curl -s -X POST -H "Authorization: Bearer $GALTEA_API_KEY" -H "Content-Type: application/json" \
+  "$GALTEA_API_URL/evaluations" \
+  -d '{"versionId":"<vId>","testId":"<tId>","metricId":"<mId>"}' \
+  | jq '{id, status}'
+
+# 6. Poll until complete (status leaves PENDING)
+curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
+  "$GALTEA_API_URL/evaluations/<evalId>" | jq '{id, status, score, reason}'
 ```
 
-`type` values: `QUALITY`, `RED_TEAMING`, `SCENARIOS`.
-`status` values: `PENDING`, `SUCCESS`, `FAILED`, `AUGMENTING`. Wait for `SUCCESS` before running evaluations.
+Other end-to-end flows — creating a product, linking an endpoint connection, simulating conversations, tracing an agentic system, human evaluation, production monitoring — are covered by tutorials under `$GALTEA_DOCS_URL/sdk/tutorials/*`. Fetch the specific one via the sitemap rather than reinventing it here.
 
-### Metrics
+## Python alternative
 
-```bash
-# List all available metrics
-curl -s "$GALTEA_BASE_URL/metrics" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, name, source, tags, evaluationParams}'
+Galtea ships an official Python SDK that wraps the same API. If the user prefers Python (or is on a shell where the Bash snippets above don't run), install it with `pip install galtea` and follow the installation guide at **https://docs.galtea.ai/sdk/installation** plus the tutorials under `$GALTEA_DOCS_URL/sdk/tutorials/*`. The SDK and the REST API target the same endpoints, so mixing them in the same project is safe.
 
-# Get
-curl -s "$GALTEA_BASE_URL/metrics/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.'
-```
+## Gotchas
 
-`source` values: `DEEPEVAL`, `GEVAL`, `FULL_PROMPT`, `PARTIAL_PROMPT`, `HUMAN_EVALUATION`, `DETERMINISTIC`, `SELF_HOSTED`.
+True quirks — things you won't find by reading `openapi.json` alone.
 
-### Evaluations
+- **Response shape is inconsistent.** `/products`, `/tests`, `/versions`, `/evaluations`, `/metrics`, `/traces` return a plain array (`jq '.[]'`). `/sessions`, `/inferenceResults`, `/endpointConnections`, `/organizations` return `{ data, total, page, limit }` (`jq '.data[]'`).
+- **Paginated list endpoints** (the `{data,total,page,limit}` ones) default to a limit that may hide results — pass `page` and `limit` query params when you need completeness.
+- **Duplicate names return `409 Conflict`** (version names scoped by product, metric/test names scoped by org). Don't blind-retry on 409 — either rename or fetch the existing row.
+- **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will fail.
+- **`inputTemplate` uses Nunjucks/Jinja2** and must contain `{{ input.user_message }}` for `CONVERSATION` endpoint connections.
+- **`outputMapping` uses JSONPath** and must contain an `output` key.
+- **Traces** return a plain array (`jq '.[]'`), and `input` / `output` / `attributes` fields may be `null` even on valid rows. Filter by `inferenceResultIds` (plural) when listing.
+- **Common error codes**: `401` invalid/revoked key (run auth), `402` out of credits (check `GET /organizations`), `409` duplicate name (rename), `422` validation error (inspect response body, cross-check OpenAPI for the constraint).
+- **Credits are consumed** by evaluations and test generation only — not by reads or auth. `GET /organizations` returns `remainingSubscriptionCredits` + `extraCredits` for a pre-flight sanity check before a large batch. Informational, not mandatory.
 
-```bash
-# List (filter by version or test)
-curl -s "$GALTEA_BASE_URL/evaluations?versionIds=<versionId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, status, score, metricId}'
+## When not to use this skill
 
-# Get
-curl -s "$GALTEA_BASE_URL/evaluations/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '{id, status, score, reason, error}'
-
-# Create (trigger)
-curl -s -X POST "$GALTEA_BASE_URL/evaluations" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "versionId": "<versionId>",
-    "testId": "<testId>",
-    "metricId": "<metricId>"
-  }' | jq '{id, status}'
-```
-
-`status` values: `PENDING`, `PENDING_HUMAN`, `SUCCESS`, `FAILED`, `SKIPPED`.
-Poll `GET /evaluations/<id>` until status is no longer `PENDING`.
-
-### Sessions
-
-```bash
-# List (filter by version)
-curl -s "$GALTEA_BASE_URL/sessions?versionId=<versionId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.data[] | {id, status, error, createdAt}'
-
-# Get
-curl -s "$GALTEA_BASE_URL/sessions/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.'
-```
-
-### Inference Results
-
-```bash
-# List (filter by session)
-curl -s "$GALTEA_BASE_URL/inferenceResults?sessionId=<sessionId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.data[] | {id, status, actualOutput, latency, error}'
-
-# Get
-curl -s "$GALTEA_BASE_URL/inferenceResults/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.'
-```
-
-### Traces
-
-```bash
-# List (filter by inferenceResultId)
-# NOTE: use plural inferenceResultIds — singular is rejected with a filter error
-# NOTE: response is a plain array [], not {data: []}
-# NOTE: input/output/attributes fields may be null even on valid traces
-curl -s "$GALTEA_BASE_URL/traces?inferenceResultIds=<inferenceResultId>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.[] | {id, type, name, latencyMs, error}'
-
-# Get
-curl -s "$GALTEA_BASE_URL/traces/<id>" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.'
-```
-
-`type` values: `SPAN`, `GENERATION`, `TOOL`, `RETRIEVER`, `CHAIN`, `AGENT`, `EVALUATOR`, `EMBEDDING`, `GUARDRAIL`, `EVENT`.
-
-### Organizations
-
-```bash
-# Get current org info (includes remaining credits)
-curl -s "$GALTEA_BASE_URL/organizations" \
-  -H "Authorization: Bearer $GALTEA_API_KEY" | jq '.data[0] | {id, name, remainingSubscriptionCredits, extraCredits}'
-```
-
----
-
-## Tips
-
-- Filter query params always use the **plural** form: `productIds`, `versionIds`, `testIds`, `metricIds`, etc. Singular forms (e.g. `productId`) are rejected with an error listing accepted params.
-- List endpoints have inconsistent response shapes. `/products`, `/tests`, `/versions`, `/evaluations`, `/metrics`, and `/traces` return a plain array `[...]` — use `.[]` with jq. Other endpoints (e.g. sessions, inferenceResults, endpointConnections, organizations) return `{ data: [...], total, page, limit }` — use `.data[]` for those.
-- Use `jq` to extract specific fields and avoid large response payloads.
-- `inputTemplate` uses Nunjucks/Jinja2 syntax. The placeholder `{{ input.user_message }}` is required for conversation connections.
-- `outputMapping` uses JSONPath expressions. The `output` key is required.
-- Tests with `status: PENDING` or `AUGMENTING` are not ready for evaluation — wait for `SUCCESS`.
-- Evaluations consume credits. Check `GET /organizations` for remaining balance before running large batches.
+- **Building the AI product itself.** This skill is for *evaluating* products, not authoring them.
+- **Pure UI browsing.** If the user just wants to look at results visually, point them at `https://platform.galtea.ai` instead of replaying the curl chain.
+- **Hand-writing test content.** Galtea generates test cases from specifications (see `/sdk/tutorials/writing-specifications`). Let the platform do that work.
