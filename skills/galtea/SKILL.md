@@ -53,9 +53,9 @@ If that leaves `$GALTEA_API_KEY` empty, run the paste-and-validate flow below. C
 
 When no key is available:
 
-1. Tell the user: *"Open the Galtea Dashboard at https://platform.galtea.ai, go to your account settings, and find the **API Key** section. Copy your existing key (it starts with `gsk_`), or click **Generate API Key** if you don't have one yet. Each account has a single API key — regenerating permanently replaces the previous one and any clients still using it will start getting 401s. Paste the key in the chat as plain text."*
+1. Tell the user: *"Open https://platform.galtea.ai → **Settings** → **API Key** section. Copy your existing key (starts with `gsk_`), or click **Generate API Key** if you don't have one. Each account has a single key — regenerating permanently replaces it. Paste it here as plain text."*
 2. Receive the pasted value as sensitive free-text. Do **not** use `AskUserQuestion` for this — pasting secrets into option metadata leaks them into logs.
-3. Cache the key at `~/.galtea/api-key` with filesystem mode `600` (readable only by the user account running the shell — standard credential-file pattern, has nothing to do with Galtea roles):
+3. Cache the key at `~/.galtea/api-key` with file mode `600` (readable only by your OS user):
    ```bash
    mkdir -p ~/.galtea && printf '%s' "$PASTED_KEY" > ~/.galtea/api-key && chmod 600 ~/.galtea/api-key
    ```
