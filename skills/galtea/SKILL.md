@@ -18,9 +18,9 @@ If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, t
 1. **Authenticate before any API call.** If `$GALTEA_API_KEY` is unset and no key is cached at `~/.galtea/api-key`, run the Authentication flow. Never hit the API without a key resolved.
 2. **Documentation first — never implement from memory.** Galtea ships frequently; endpoints, metrics, and SDK APIs change. Before you advise on an endpoint, workflow, concept, or metric, fetch the relevant docs page (§Discover) or the exact slice of the OpenAPI spec (§Discover). Examples inlined here are illustrative, not authoritative.
 3. **Discover docs via `llms.txt`, then fetch pages as markdown.** The index at `$GALTEA_DOCS_URL/llms.txt` lists every docs page with title, URL, and one-line description. Grep it for the path prefix you need (`/sdk/tutorials/`, `/concepts/`, `/api-reference/`), then fetch the specific page — every URL works with a `.md` suffix (`Content-Type: text/markdown`) for clean content. Do not guess URLs; do not page through `sitemap.xml` when `llms.txt` is available.
-4. **OpenAPI is the source of truth for endpoint shapes.** Fetch `$GALTEA_API_URL/openapi.json` (OpenAPI 3.0, ~900 KB, security scheme `bearerAuth`) for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
+4. **OpenAPI is the source of truth for endpoint shapes.** Fetch `$GALTEA_API_URL/openapi.json` (OpenAPI 3.0, ~180 KB, security scheme `bearerAuth` — both `gsk_*` and `gsk-*` keys accepted) for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
 5. **Filter query params are usually plural** (`productIds`, `versionIds`, `testIds`, `metricIds`, `inferenceResultIds`), though a few endpoints accept singular. When in doubt, check `parameters` for the endpoint in `openapi.json` before guessing.
-6. **Evaluations are async.** After `POST /evaluations`, poll `GET /evaluations/{id}` until `status` leaves `PENDING`.
+6. **Evaluations are async.** Trigger via `POST /evaluations/from{Version,Session,InferenceResult}` (returns `202` with no body); list `/evaluations?...&statuses=PENDING` to fetch the created IDs, then poll `GET /evaluations/{id}` until `status` reaches `SUCCESS`, `FAILED`, or `SKIPPED`. `PENDING_HUMAN` means the evaluation is waiting for a human reviewer — stop polling and surface it to the user.
 7. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
 
 ## Environment
@@ -62,7 +62,7 @@ When no key is available:
 4. Validate by hitting the credit-free `/organizations` endpoint (reads never consume credits) — run the resolver block (above), then:
    ```bash
    curl -s -H "Authorization: Bearer $GALTEA_API_KEY" "$GALTEA_API_URL/organizations" \
-     | jq '.data[0] | {id, name, remainingSubscriptionCredits, extraCredits}'
+     | jq '.[0] | {id, name, remainingSubscriptionCredits, extraCredits}'
    ```
 5. On success, report the organization name and remaining credits to the user. On `401`, tell them the key is invalid and loop back to step 1 (up to 3 tries before giving up).
 
@@ -117,15 +117,15 @@ if [ ! -f /tmp/galtea-openapi.json ] || \
   curl -s "$GALTEA_API_URL/openapi.json" > /tmp/galtea-openapi.json
 fi
 
-jq '.paths | keys[]'                 /tmp/galtea-openapi.json   # every endpoint path
-jq '.paths."/evaluations".post'      /tmp/galtea-openapi.json   # full POST /evaluations spec
-jq '.components.schemas.Evaluation'  /tmp/galtea-openapi.json   # reusable schema
-jq '.components.securitySchemes'     /tmp/galtea-openapi.json   # auth schemes
+jq '.paths | keys[]'                           /tmp/galtea-openapi.json   # every endpoint path
+jq '.paths."/evaluations/fromVersion".post'    /tmp/galtea-openapi.json   # one operation spec
+jq '.components.schemas.Evaluation'            /tmp/galtea-openapi.json   # reusable schema
+jq '.components.securitySchemes'               /tmp/galtea-openapi.json   # auth schemes
 ```
 
-**OpenAPI 3.0 in one paragraph.** `.paths.<path>.<method>` describes one operation (its `parameters`, `requestBody`, `responses`). Request/response shapes use `$ref` pointers into `.components.schemas.<Name>`. Resolve references with `jq` incrementally — the full spec is ~900 KB and loading it all blows your context.
+**OpenAPI 3.0 in one paragraph.** `.paths.<path>.<method>` describes one operation (its `parameters`, `requestBody`, `responses`). Request/response shapes use `$ref` pointers into `.components.schemas.<Name>`. Resolve references with `jq` incrementally rather than loading the whole spec into context.
 
-## Worked example — run a quality evaluation
+## Worked example — evaluate a product version
 
 End-to-end flow. Each numbered step runs in its own bash call, so start every call with the resolver block from the Authentication section (omitted below for brevity):
 
@@ -145,26 +145,26 @@ curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
 curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
   "$GALTEA_API_URL/versions?productIds=<productId>" | jq '.[] | {id, name}'
 
-# 3. Find a ready test dataset (status must be SUCCESS)
-curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
-  "$GALTEA_API_URL/tests?productIds=<productId>" | jq '.[] | {id, name, type, status}'
-
-# 4. Find a metric
-curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
-  "$GALTEA_API_URL/metrics" | jq '.[] | {id, name, source}'
-
-# 5. Trigger the evaluation (one POST per metric × version × test combo)
+# 3. Kick off evaluations for the whole version. Galtea resolves the product's
+#    specifications, their linked metrics, and their linked tests automatically.
+#    Returns 202 with no body — jobs are created asynchronously.
 curl -s -X POST -H "Authorization: Bearer $GALTEA_API_KEY" -H "Content-Type: application/json" \
-  "$GALTEA_API_URL/evaluations" \
-  -d '{"versionId":"<vId>","testId":"<tId>","metricId":"<mId>"}' \
-  | jq '{id, status}'
+  "$GALTEA_API_URL/evaluations/fromVersion" \
+  -d '{"versionId":"<versionId>"}'
 
-# 6. Poll until complete (status leaves PENDING)
+# 4. List the created evaluations to grab their IDs (the POST returned no body)
+curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
+  "$GALTEA_API_URL/evaluations?versionIds=<versionId>&statuses=PENDING&sort=-createdAt&limit=20" \
+  | jq '.[] | {id, metricId, status}'
+
+# 5. Poll one until it settles (SUCCESS / FAILED / SKIPPED)
 curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
   "$GALTEA_API_URL/evaluations/<evalId>" | jq '{id, status, score, reason}'
 ```
 
-Other end-to-end flows — creating a product, linking an endpoint connection, simulating conversations, tracing an agentic system, human evaluation, production monitoring — are covered by tutorials under `$GALTEA_DOCS_URL/sdk/tutorials/*`. Fetch the specific one via the sitemap rather than reinventing it here.
+Alternative creation endpoints: `POST /evaluations/fromSession` (needs `sessionId`, optional `metrics`, `specificationIds`), `POST /evaluations/fromInferenceResult` (needs `inferenceResultId`, same optionals), `POST /evaluations/singleTurn`, `POST /evaluations/batch`, `POST /evaluations/retry` (re-run failed). Check the OpenAPI body schema before calling.
+
+Other end-to-end flows — creating a product, linking an endpoint connection, simulating conversations, tracing an agentic system, human evaluation, production monitoring — are covered by tutorials under `$GALTEA_DOCS_URL/sdk/tutorials/*`. Fetch the specific one via `llms.txt` rather than reinventing it here.
 
 ## Python alternative
 
@@ -174,14 +174,13 @@ Galtea ships an official Python SDK that wraps the same API. If the user prefers
 
 True quirks — things you won't find by reading `openapi.json` alone.
 
-- **Response shape is inconsistent.** `/products`, `/tests`, `/versions`, `/evaluations`, `/metrics`, `/traces` return a plain array (`jq '.[]'`). `/sessions`, `/inferenceResults`, `/endpointConnections`, `/organizations` return `{ data, total, page, limit }` (`jq '.data[]'`).
-- **Paginated list endpoints** (the `{data,total,page,limit}` ones) default to a limit that may hide results — pass `page` and `limit` query params when you need completeness.
-- **Duplicate names return `409 Conflict`** (version names scoped by product, metric/test names scoped by org). Don't blind-retry on 409 — either rename or fetch the existing row.
+- **All list endpoints return a plain JSON array.** Iterate with `jq '.[]'` / index with `jq '.[0]'`. There is no `{data, total, page, limit}` wrapper on any list endpoint, so the total row count is not returned in-band — you discover the end of a paginated scan by getting back fewer rows than `limit` (or an empty array).
+- **Paginate with `limit` + `offset`** (not `page` + `limit`) — e.g., `?limit=50&offset=100`. Applies to every list endpoint.
 - **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will fail.
 - **`inputTemplate` uses Nunjucks/Jinja2** and must contain `{{ input.user_message }}` for `CONVERSATION` endpoint connections.
 - **`outputMapping` uses JSONPath** and must contain an `output` key.
-- **Traces** return a plain array (`jq '.[]'`), and `input` / `output` / `attributes` fields may be `null` even on valid rows. Filter by `inferenceResultIds` (plural) when listing.
-- **Common error codes**: `401` invalid/revoked key (run auth), `402` out of credits (check `GET /organizations`), `409` duplicate name (rename), `422` validation error (inspect response body, cross-check OpenAPI for the constraint).
+- **Trace rows may have `null` `input` / `output` / `attributes`** even when the row itself is valid. Filter by `inferenceResultIds` (plural) when listing.
+- **Common error codes**: `401` invalid/revoked key (clear `~/.galtea/api-key` and re-run auth), `402` out of credits (check `GET /organizations`), `422` validation error (inspect response body, cross-check the endpoint's request schema in OpenAPI for the offending field). The server may also return other 4xx codes not listed here — inspect the body first, don't retry blindly.
 - **Credits are consumed** by evaluations and test generation only — not by reads or auth. `GET /organizations` returns `remainingSubscriptionCredits` + `extraCredits` for a pre-flight sanity check before a large batch. Informational, not mandatory.
 
 ## Skill Feedback
