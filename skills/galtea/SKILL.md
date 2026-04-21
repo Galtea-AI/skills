@@ -172,16 +172,13 @@ Galtea ships an official Python SDK that wraps the same API. If the user prefers
 
 ## Gotchas
 
-True quirks — things you won't find by reading `openapi.json` alone.
+Runtime behaviors that aren't documented in the OpenAPI spec — these are the only items a well-informed agent still needs explicit reminders for.
 
-- **All list endpoints return a plain JSON array.** Iterate with `jq '.[]'` / index with `jq '.[0]'`. There is no `{data, total, page, limit}` wrapper on any list endpoint, so the total row count is not returned in-band — you discover the end of a paginated scan by getting back fewer rows than `limit` (or an empty array).
-- **Paginate with `limit` + `offset`** (not `page` + `limit`) — e.g., `?limit=50&offset=100`. Applies to every list endpoint.
-- **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will fail.
-- **`inputTemplate` uses Nunjucks/Jinja2** and must contain `{{ input.user_message }}` for `CONVERSATION` endpoint connections.
-- **`outputMapping` uses JSONPath** and must contain an `output` key.
-- **Trace rows may have `null` `input` / `output` / `attributes`** even when the row itself is valid. Filter by `inferenceResultIds` (plural) when listing.
-- **Common error codes**: `401` invalid/revoked key (clear `~/.galtea/api-key` and re-run auth), `402` out of credits (check `GET /organizations`), `422` validation error (inspect response body, cross-check the endpoint's request schema in OpenAPI for the offending field). The server may also return other 4xx codes not listed here — inspect the body first, don't retry blindly.
-- **Credits are consumed** by evaluations and test generation only — not by reads or auth. `GET /organizations` returns `remainingSubscriptionCredits` + `extraCredits` for a pre-flight sanity check before a large batch. Informational, not mandatory.
+- **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will fail. Workflow constraint, not a schema rule.
+- **Duplicate names return `400 Bad Request`** (not 409). Every create service catches the unique-constraint violation and re-throws as `BadRequestError` — see `api/src/application/services/productService.ts` (and the same pattern in metric / version / test / endpointConnection / userGroup / model / evaluation services). The body's `message` follows `"A <Entity> with the same Name [and Type]? already exists..."` — match on that substring to distinguish it from other 400s; don't blind-retry.
+- **Trace rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names — it's `inputData`, not `input`; there is no `attributes` field). Null-guard before reading.
+- **Credits are consumed** by evaluations and test generation only — reads and auth are free. `GET /organizations` returns `remainingSubscriptionCredits` + `extraCredits` for a pre-flight check. When an org runs out, operations fail with a `message` in the body; there's no dedicated HTTP status for it, so inspect the message rather than matching on a code.
+- **Error response shape is stable; coverage in OpenAPI isn't.** All error responses conform to `#/components/schemas/Error` (`{error: string, message: string}`). `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do — don't rely on the HTTP code alone, and don't assume the spec enumerates everything the server can return.
 
 ## Skill Feedback
 
