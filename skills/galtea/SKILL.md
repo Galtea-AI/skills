@@ -2,7 +2,7 @@
 name: galtea
 description: Help users interact with the Galtea platform — the AI product testing and evaluation platform for AI/LLM products. Covers authentication, managing products/versions/specifications/tests/metrics/endpoint-connections/evaluations/sessions/inference-results/traces, and wiring an AI product into Galtea for automated testing.
 when_to_use: Invoke when the user mentions Galtea, asks to run or inspect an evaluation, wants to create a product/version/test/metric, needs to debug a failed session or inference, or is trying to connect their AI product to Galtea's testing platform. Trigger phrases include "galtea", "run evaluation", "gsk_...", "testing my AI product", "list my products", "create a test".
-allowed-tools: WebFetch Bash(curl *) Bash(jq *) Bash(grep *) Bash(cat *) Bash(ls *) Bash(stat *) Bash(mkdir *) Bash(chmod *) Bash(test *) Bash(date *) Bash(find *) Bash(rm *) Bash(echo *) Bash(printf *) Bash(tee *) Bash(env *) Bash(awk *) Bash(sed *) Bash(head *) Bash(tail *) Bash(wc *) Bash(sort *) Bash(uniq *) Bash(xmllint *)
+allowed-tools: WebFetch WebSearch Bash(curl *) Bash(jq *) Bash(grep *) Bash(cat *) Bash(ls *) Bash(stat *) Bash(mkdir *) Bash(chmod *) Bash(test *) Bash(date *) Bash(find *) Bash(rm *) Bash(echo *) Bash(printf *) Bash(tee *) Bash(env *) Bash(awk *) Bash(sed *) Bash(head *) Bash(tail *) Bash(wc *) Bash(sort *) Bash(uniq *) Bash(xmllint *) Bash(gh *)
 ---
 
 # Galtea
@@ -16,9 +16,9 @@ If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, t
 ## Core Rules
 
 1. **Authenticate before any API call.** If `$GALTEA_API_KEY` is unset and no key is cached at `~/.galtea/api-key`, run the Authentication flow. Never hit the API without a key resolved.
-2. **Use the docs sitemap to find pages — do not guess URLs.** The sitemap at `$GALTEA_DOCS_URL/sitemap.xml` lists every docs page. When the user asks about a concept, a workflow, or an endpoint, fetch the sitemap once per session, grep it for the relevant prefix (`/concepts/*`, `/sdk/tutorials/*`, `/api-reference/*`), and fetch only the pages you actually need.
-3. **The OpenAPI spec is the source of truth for endpoint shapes.** Fetch `$GALTEA_API_URL/openapi.json` (OpenAPI 3.0, ~900 KB, security scheme `bearerAuth`) and consult it for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
-4. **Rely on the docs for workflows and concepts.** For end-to-end playbooks (setting up a product, simulating conversations, tracing an agent, human evaluation, production monitoring), read a page under `/sdk/tutorials/*`. For entity definitions and the hierarchy between them, read `/concepts/*`. Treat the docs as canonical over anything inlined here.
+2. **Documentation first — never implement from memory.** Galtea ships frequently; endpoints, metrics, and SDK APIs change. Before you advise on an endpoint, workflow, concept, or metric, fetch the relevant docs page (§Discover) or the exact slice of the OpenAPI spec (§Discover). Examples inlined here are illustrative, not authoritative.
+3. **Discover docs via `llms.txt`, then fetch pages as markdown.** The index at `$GALTEA_DOCS_URL/llms.txt` lists every docs page with title, URL, and one-line description. Grep it for the path prefix you need (`/sdk/tutorials/`, `/concepts/`, `/api-reference/`), then fetch the specific page — every URL works with a `.md` suffix (`Content-Type: text/markdown`) for clean content. Do not guess URLs; do not page through `sitemap.xml` when `llms.txt` is available.
+4. **OpenAPI is the source of truth for endpoint shapes.** Fetch `$GALTEA_API_URL/openapi.json` (OpenAPI 3.0, ~900 KB, security scheme `bearerAuth`) for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
 5. **Filter query params are usually plural** (`productIds`, `versionIds`, `testIds`, `metricIds`, `inferenceResultIds`), though a few endpoints accept singular. When in doubt, check `parameters` for the endpoint in `openapi.json` before guessing.
 6. **Evaluations are async.** After `POST /evaluations`, poll `GET /evaluations/{id}` until `status` leaves `PENDING`.
 7. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
@@ -76,27 +76,35 @@ rm -f ~/.galtea/api-key
 
 ## Discover docs and endpoints
 
-Both the sitemap and the OpenAPI spec are large; cache them under `/tmp` with a 24-hour TTL so you don't re-download each turn. Prepend the resolver block from Authentication to every bash call below (auth key is not strictly required for these unauthenticated fetches, but the URL defaults are).
+Both `llms.txt` and the OpenAPI spec are large; cache them under `/tmp` with a 24-hour TTL so you don't re-download each turn. Prepend the resolver block from Authentication to every bash call below (auth key is not strictly required for these unauthenticated fetches, but the URL defaults are).
 
-### Docs sitemap
+**Tool preference for doc fetching.** If your host agent provides `WebFetch` / `WebSearch` (Claude Code, Cursor, etc.), prefer them over `curl` — they handle summarization, caching, and large-page trimming for free. Use `curl` when you need raw bytes for a `jq` pipeline, when caching to `/tmp`, or when no native fetch tool is available.
+
+### Docs index (`llms.txt`)
 
 ```bash
 GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
 
 # Refresh if missing or older than 24h
-if [ ! -f /tmp/galtea-sitemap.xml ] || \
-   [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-sitemap.xml 2>/dev/null || echo 0) )) -gt 86400 ]; then
-  curl -s "$GALTEA_DOCS_URL/sitemap.xml" > /tmp/galtea-sitemap.xml
+if [ ! -f /tmp/galtea-llms.txt ] || \
+   [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-llms.txt 2>/dev/null || echo 0) )) -gt 86400 ]; then
+  curl -s "$GALTEA_DOCS_URL/llms.txt" > /tmp/galtea-llms.txt
 fi
 
-# Find the URL set you need, then pick one
-grep -oE 'https://[^<]+/sdk/tutorials/[^<]+'  /tmp/galtea-sitemap.xml   # 13 tutorials
-grep -oE 'https://[^<]+/concepts/[^<]+'       /tmp/galtea-sitemap.xml   # concept pages
-grep -oE 'https://[^<]+/api-reference/[^<]+'  /tmp/galtea-sitemap.xml   # per-endpoint docs
+# Find the entries you need — the index is a markdown list of
+#   - [Title](URL.md): One-line description
+grep '/sdk/tutorials/'  /tmp/galtea-llms.txt   # tutorials (end-to-end playbooks)
+grep '/concepts/'       /tmp/galtea-llms.txt   # entity definitions + hierarchy
+grep '/api-reference/'  /tmp/galtea-llms.txt   # per-endpoint reference pages
 
-# Fetch one specific page
-curl -s "$GALTEA_DOCS_URL/sdk/tutorials/run-test-based-evaluations"
+# Fetch one specific page as clean markdown (append .md to any page URL)
+curl -s "$GALTEA_DOCS_URL/sdk/tutorials/run-test-based-evaluations.md"
+
+# Fetch everything at once (large but sometimes useful for long-context agents)
+curl -s "$GALTEA_DOCS_URL/llms-full.txt"
 ```
+
+For end-to-end playbooks (creating a product, simulating conversations, tracing an agent, human evaluation, production monitoring) look under `/sdk/tutorials/`. For entity definitions and the hierarchy between them look under `/concepts/`. For per-endpoint reference pages look under `/api-reference/`.
 
 ### OpenAPI spec
 
@@ -175,6 +183,19 @@ True quirks — things you won't find by reading `openapi.json` alone.
 - **Traces** return a plain array (`jq '.[]'`), and `input` / `output` / `attributes` fields may be `null` even on valid rows. Filter by `inferenceResultIds` (plural) when listing.
 - **Common error codes**: `401` invalid/revoked key (run auth), `402` out of credits (check `GET /organizations`), `409` duplicate name (rename), `422` validation error (inspect response body, cross-check OpenAPI for the constraint).
 - **Credits are consumed** by evaluations and test generation only — not by reads or auth. `GET /organizations` returns `remainingSubscriptionCredits` + `extraCredits` for a pre-flight sanity check before a large batch. Informational, not mandatory.
+
+## Skill Feedback
+
+When the user expresses that something about this skill is not working as expected, gives incorrect guidance, is missing information, or could be improved — offer to submit feedback to the skill maintainers. This includes when:
+
+- The skill gave wrong or outdated instructions
+- A workflow didn't produce the expected result
+- The user wishes the skill covered something it doesn't
+- The user explicitly says something like "this should work differently" or "this is wrong"
+
+**Do NOT trigger this** for issues with the Galtea product itself — only for issues with this skill's instructions and behavior. For product issues, direct the user to `support@galtea.ai`.
+
+When triggered, follow the process in [references/skill-feedback.md](references/skill-feedback.md).
 
 ## When not to use this skill
 
