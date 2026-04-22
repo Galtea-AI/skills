@@ -11,14 +11,14 @@ Galtea is an AI product testing and evaluation platform. Teams use it to define 
 
 This skill helps the agent drive the Galtea REST API on behalf of the user: authenticate, discover the right docs and endpoints, then run or inspect evaluations. Source-of-truth details live in the OpenAPI spec and the docs; this file points at them rather than duplicating them.
 
-If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, then `/sdk/tutorials/writing-specifications`, then `/sdk/tutorials/run-test-based-evaluations` — the shortest zero-to-evaluation path.
+If the user is new to Galtea, send them through `https://docs.galtea.ai/quickstart`, then `/sdk/tutorials/writing-specifications`, then `/sdk/tutorials/run-test-based-evaluations` — the shortest zero-to-evaluation path.
 
 ## Core Rules
 
 1. **Authenticate before any API call.** If `$GALTEA_API_KEY` is unset and no key is cached at `~/.galtea/api-key`, run the Authentication flow. Never hit the API without a key resolved.
 2. **Documentation first — never implement from memory.** Galtea ships frequently; endpoints, metrics, and SDK APIs change. Before you advise on an endpoint, workflow, concept, or metric, fetch the relevant docs page (§Discover) or the exact slice of the OpenAPI spec (§Discover). Examples inlined here are illustrative, not authoritative.
-3. **Discover docs via `llms.txt`, then fetch pages as markdown.** The index at `$GALTEA_DOCS_URL/llms.txt` lists every docs page with title, URL, and one-line description. Grep it for the path prefix you need (`/sdk/tutorials/`, `/concepts/`, `/api-reference/`), then fetch the specific page — every URL works with a `.md` suffix (`Content-Type: text/markdown`) for clean content. Do not guess URLs; do not page through `sitemap.xml` when `llms.txt` is available.
-4. **OpenAPI is the source of truth for endpoint shapes.** Fetch `$GALTEA_API_URL/openapi.json` (OpenAPI 3.0, ~180 KB, security scheme `bearerAuth` — both `gsk_*` and `gsk-*` keys accepted) for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
+3. **Discover docs via `llms.txt`, then fetch pages as markdown.** The index at `https://docs.galtea.ai/llms.txt` lists every docs page with title, URL, and one-line description. Grep it for the path prefix you need (`/sdk/tutorials/`, `/concepts/`, `/api-reference/`), then fetch the specific page — every URL works with a `.md` suffix (`Content-Type: text/markdown`) for clean content. Do not guess URLs; do not page through `sitemap.xml` when `llms.txt` is available.
+4. **OpenAPI is the source of truth for endpoint shapes.** Fetch `https://api.galtea.ai/openapi.json` (OpenAPI 3.0, ~180 KB, security scheme `bearerAuth` — both `gsk_*` and `gsk-*` keys accepted) for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
 5. **Filter query params are usually plural** (`productIds`, `versionIds`, `testIds`, `metricIds`, `inferenceResultIds`), though a few endpoints accept singular. When in doubt, check `parameters` for the endpoint in `openapi.json` before guessing.
 6. **Evaluations are async.** Trigger via `POST /evaluations/from{Version,Session,InferenceResult}` (returns `202` with no body); list `/evaluations?...&statuses=PENDING` to fetch the created IDs, then poll `GET /evaluations/{id}` until `status` reaches `SUCCESS`, `FAILED`, or `SKIPPED`. `PENDING_HUMAN` means the evaluation is waiting for a human reviewer — stop polling and surface it to the user.
 7. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
@@ -29,7 +29,7 @@ If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, t
 |---|---|
 | `GALTEA_API_KEY` | `gsk_*` bearer token scoped to the user's Galtea organization. Unset by default — see Authentication. |
 
-The changelog at `$GALTEA_DOCS_URL/changelog` lists every new metric, endpoint, and feature by date — consult it when the user asks about something recent.
+The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endpoint, and feature by date — consult it when the user asks about something recent.
 
 **Shell assumption.** The snippets in this skill target a POSIX shell (macOS, Linux, WSL, Git Bash). They rely on `jq`, `grep`, `stat`, `chmod`, and Bash substitutions that don't work in native PowerShell or `cmd`. Windows users on native PowerShell should install WSL or Git Bash, or switch to the Python SDK — install instructions at **https://docs.galtea.ai/sdk/installation** — which is fully cross-platform.
 
@@ -158,11 +158,11 @@ curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
 
 Alternative creation endpoints: `POST /evaluations/fromSession` (needs `sessionId`, optional `metrics`, `specificationIds`), `POST /evaluations/fromInferenceResult` (needs `inferenceResultId`, same optionals), `POST /evaluations/singleTurn`, `POST /evaluations/batch`, `POST /evaluations/retry` (re-run failed). Check the OpenAPI body schema before calling.
 
-Other end-to-end flows — creating a product, linking an endpoint connection, simulating conversations, tracing an agentic system, human evaluation, production monitoring — are covered by tutorials under `$GALTEA_DOCS_URL/sdk/tutorials/*`. Fetch the specific one via `llms.txt` rather than reinventing it here.
+Other end-to-end flows — creating a product, linking an endpoint connection, simulating conversations, tracing an agentic system, human evaluation, production monitoring — are covered by tutorials under `https://docs.galtea.ai/sdk/tutorials/*`. Fetch the specific one via `llms.txt` rather than reinventing it here.
 
 ## Python alternative
 
-Galtea ships an official Python SDK that wraps the same API. If the user prefers Python (or is on a shell where the Bash snippets above don't run), install it with `pip install galtea` and follow the installation guide at **https://docs.galtea.ai/sdk/installation** plus the tutorials under `$GALTEA_DOCS_URL/sdk/tutorials/*`. The SDK and the REST API target the same endpoints, so mixing them in the same project is safe.
+Galtea ships an official Python SDK that wraps the same API. If the user prefers Python (or is on a shell where the Bash snippets above don't run), install it with `pip install galtea` and follow the installation guide at **https://docs.galtea.ai/sdk/installation** plus the tutorials under `https://docs.galtea.ai/sdk/tutorials/*`. The SDK and the REST API target the same endpoints, so mixing them in the same project is safe.
 
 ## Gotchas
 
