@@ -37,7 +37,7 @@ The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endp
 
 Galtea uses bearer-token auth. Every request includes `-H "Authorization: Bearer $GALTEA_API_KEY"`.
 
-**Whenever you're about to make a Galtea API call**, start the bash call with this resolver block — it loads the cached key so the rest of the call can use `$GALTEA_API_KEY` freely:
+**Whenever you're about to make a Galtea API call**, start the bash call with this resolver block — it sets up the URL helpers and loads the cached key, so the rest of the call can use `$GALTEA_API_URL`, `$GALTEA_DOCS_URL`, and `$GALTEA_API_KEY` freely:
 
 ```bash
 GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
@@ -127,7 +127,7 @@ End-to-end flow. Each numbered step runs in its own bash call, so start every ca
 # Resolver (run this at the top of every Galtea bash call)
 GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
 GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
-GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key)}"
+GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key 2>/dev/null)}"
 ```
 
 ```bash
