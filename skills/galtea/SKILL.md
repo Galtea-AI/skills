@@ -255,7 +255,7 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Evaluate past conversations | Evaluate already-completed multi-turn sessions | `/sdk/tutorials/evaluating-conversations` |
 | Monitor production responses | Log real user queries as inference results, evaluate asynchronously | `/sdk/tutorials/monitor-production-responses-to-user-queries` |
 | Set up human evaluation | Create UserGroups, assign metrics, reviewers claim + score via platform | `/sdk/tutorials/human-evaluation` |
-| Trace agent internals | Capture internal tool calls / LLM calls with `@trace` decorator or `start_trace` | `/sdk/tutorials/tracing-agent-operations` |
+| Trace agent internals | Capture internal tool calls / LLM calls as Trace records | `/sdk/tutorials/tracing-agent-operations` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
 
 For other workflows (custom test datasets, judge prompts, agentic evaluation, custom metrics, platform-only inferences, Langfuse integration, model tracking), grep `llms.txt` for the relevant tutorial.
@@ -273,8 +273,8 @@ This skill can execute REST API calls via `curl` directly. For Python SDK guidan
 
 **When to recommend the Python SDK (`pip install galtea`):**
 - Any workflow that involves running the user agent (the SDK handles the agent function loop)
-- Conversation simulation (`galtea.simulator.simulate()`)
-- Tracing agent internals (`@trace` decorator, `start_trace` context manager)
+- Conversation simulation
+- Tracing agent internals
 - Production monitoring with inline logging
 - The user is already writing Python
 
