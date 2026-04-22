@@ -199,28 +199,7 @@ To fetch any page: `curl -s "https://docs.galtea.ai<path>.md"` or use `WebFetch`
 
 ## REST API vs Python SDK
 
-This skill can execute REST API calls via `curl` directly. For Python SDK guidance, fetch the relevant tutorial or SDK API reference page and advise the user based on that content.
-
-**When to recommend the REST API (curl):**
-- Quick one-off queries (list products, check evaluation status)
-- Debugging or inspecting API responses directly
-- Environments where Python is not available
-
-**When to recommend the Python SDK (`pip install galtea`):**
-- Any workflow that involves running the user agent (the SDK handles the agent function loop)
-- Conversation simulation
-- Tracing agent internals
-- Production monitoring with inline logging
-- The user is already writing Python
-
-**Key SDK capabilities** (fetch the relevant `/sdk/api/*` page in `llms.txt` before advising on the exact method -- identifiers below are routing hints only, not canonical names):
-
-- **Agent function** -- the user's AI product, wrapped by the SDK. Multiple signatures are auto-detected; check the installation docs or `/sdk/api/*` for the current list.
-- **Simulator** -- plays the user role across multi-turn conversations, calling the agent each turn.
-- **Tracing** -- captures internal agent operations (tool calls, LLM calls) as Trace records; both decorator and context-manager forms are available.
-- **Inference generation** -- single-call utility that runs the agent and logs the inference result in one step.
-
-SDK API reference pages live under `/sdk/api/*` in `llms.txt`. The SDK and the REST API target the same backend, so mixing them in the same project is safe.
+This skill can execute REST API calls via `curl` directly, or advise on the Python SDK (`pip install galtea`) -- they target the same backend, so mixing them in one project is safe. For the decision framework (when to pick each) plus routing hints for the main SDK capabilities (agent function, simulator, tracing, inference generation), read [references/rest-vs-sdk.md](references/rest-vs-sdk.md). Fetch it whenever the user asks which approach to use, mentions the SDK, or needs guidance on conversation simulation, agent tracing, or production-monitoring workflows -- those lean SDK.
 
 ## Gotchas
 
