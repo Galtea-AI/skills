@@ -1,7 +1,7 @@
 name: Skill feedback
 description: Report that the Galtea skill gave incorrect guidance, is missing information, or could be improved.
 title: "skill-feedback: "
-labels: ["skill-feedback"]
+labels: ["skill-feedback", "waiting-for-human-check"]
 body:
   - type: markdown
     attributes:
