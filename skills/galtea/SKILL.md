@@ -64,12 +64,14 @@ Product
 | **Conversation simulation** | Test multi-turn behavior with simulated users | Galtea simulator plays the user role, agent responds, then evaluate the session |
 | **Production monitoring** | Evaluate real user interactions after deployment | Log inference results from production, evaluate them asynchronously |
 
-### Metric types
+### Metric types (verify against docs)
 
 - **AI-as-judge** (`FULL_PROMPT` / `PARTIAL_PROMPT`): An LLM scores the output using a judge prompt. Most common.
 - **Human evaluation** (`HUMAN_EVALUATION`): A human reviewer scores via the platform. Requires UserGroups.
 - **Deterministic**: Rule-based scoring (exact match, regex, etc.).
 - **Custom**: User-defined metrics with their own scoring logic.
+
+Fetch `/concepts/metrics` from the docs for the current, authoritative list.
 
 ## Core Rules
 
@@ -207,7 +209,7 @@ curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
 curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
   "$GALTEA_API_URL/versions?productIds=<productId>" | jq '.[] | {id, name}'
 
-# 3. Kick off evaluations for the whole version. Galtea resolves the product
+# 3. Kick off evaluations for the whole version. Galtea resolves the product's
 #    specifications, their linked metrics, and their linked tests automatically.
 #    Returns 202 with no body -- jobs are created asynchronously.
 curl -s -X POST -H "Authorization: Bearer $GALTEA_API_KEY" -H "Content-Type: application/json" \
@@ -254,14 +256,9 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Monitor production responses | Log real user queries as inference results, evaluate asynchronously | `/sdk/tutorials/monitor-production-responses-to-user-queries` |
 | Set up human evaluation | Create UserGroups, assign metrics, reviewers claim + score via platform | `/sdk/tutorials/human-evaluation` |
 | Trace agent internals | Capture internal tool calls / LLM calls with `@trace` decorator or `start_trace` | `/sdk/tutorials/tracing-agent-operations` |
-| Create a custom test dataset | Upload or generate custom test cases | `/sdk/tutorials/create-test` |
-| Write a judge prompt | Author an LLM-as-a-judge prompt for a custom metric | `/sdk/tutorials/how-to-create-your-llm-as-a-judge-prompt` |
-| Evaluate an agentic system | Combine tracing with custom metrics scoped to specific agent steps | `/sdk/tutorials/how-to-evaluate-your-agentic-system` |
-| Run evaluations with custom metrics | Use self-hosted or custom-prompt metrics | `/sdk/tutorials/evaluate-with-custom-metrics` |
-| Run inferences from the platform (no SDK) | Configure EndpointConnection, trigger from Dashboard | `/sdk/tutorials/direct-inferences-and-evaluations-from-platform` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
-| Connect Langfuse traces | Send Langfuse traces to Galtea for evaluation | `/sdk/integrations/langfuse/overview` |
-| Track which LLM a version was tested with | Create/list Model records tied to the product | `/concepts/model` |
+
+For other workflows (custom test datasets, judge prompts, agentic evaluation, custom metrics, platform-only inferences, Langfuse integration, model tracking), grep `llms.txt` for the relevant tutorial.
 
 To fetch any page: `curl -s "$GALTEA_DOCS_URL<path>.md"` or use `WebFetch`.
 
