@@ -1,5 +1,9 @@
 labels: []
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to share ideas or improvements for the Galtea skills. For bugs or incorrect behavior, use the **Skill feedback** issue template instead.
   - type: textarea
     id: idea
     attributes:

@@ -97,7 +97,7 @@ When no key is available:
 2. Receive the pasted value as sensitive free-text. Do **not** use `AskUserQuestion` for this -- pasting secrets into option metadata leaks them into logs.
 3. Cache the key at `~/.galtea/api-key` with file mode `600` (readable only by your OS user):
    ```bash
-   mkdir -p ~/.galtea && printf '%s' "$PASTED_KEY" | sed 's/[[:space:]]//g' > ~/.galtea/api-key && chmod 600 ~/.galtea/api-key
+   umask 077 && mkdir -p ~/.galtea && printf '%s' "$PASTED_KEY" | sed 's/[[:space:]]//g' > ~/.galtea/api-key
    ```
 4. Validate by hitting the credit-free `/organizations` endpoint (reads never consume credits) -- run the resolver block (above), then:
    ```bash

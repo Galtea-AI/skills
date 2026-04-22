@@ -33,9 +33,9 @@ npx skills add Galtea-AI/skills --skill "galtea"
 Clone this repo and symlink the skill into your agent's skills directory:
 
 ```bash
-git clone https://github.com/Galtea-AI/skills.git /path/to/galtea-skills
+git clone https://github.com/Galtea-AI/skills.git ~/galtea-skills
 mkdir -p ~/.claude/skills
-ln -s /path/to/galtea-skills/skills/galtea ~/.claude/skills/galtea
+ln -s ~/galtea-skills/skills/galtea ~/.claude/skills/galtea
 ```
 
 Replace `~/.claude/skills/galtea` with your agent's skills path if you are not on Claude Code.
