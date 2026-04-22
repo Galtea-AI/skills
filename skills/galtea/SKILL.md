@@ -161,46 +161,9 @@ jq '.components.securitySchemes'               /tmp/galtea-openapi.json   # auth
 
 **OpenAPI 3.0 in one paragraph.** `.paths.<path>.<method>` describes one operation (its `parameters`, `requestBody`, `responses`). Request/response shapes use `$ref` pointers into `.components.schemas.<Name>`. Resolve references with `jq` incrementally rather than loading the whole spec into context.
 
-## Worked example -- evaluate a product version
+## Evaluation creation paths
 
-End-to-end flow. Each numbered step runs in its own bash call, so start every call with the resolver block from the Authentication section (omitted below for brevity):
-
-```bash
-# Resolver (run this at the top of every Galtea bash call)
-GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
-GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
-GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key 2>/dev/null)}"
-```
-
-```bash
-# 1. Find the product
-curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
-  "$GALTEA_API_URL/products" | jq '.[] | {id, name}'
-
-# 2. Find the version to evaluate
-curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
-  "$GALTEA_API_URL/versions?productIds=<productId>" | jq '.[] | {id, name}'
-
-# 3. Kick off evaluations for the whole version. Galtea resolves the product's
-#    specifications, their linked metrics, and their linked tests automatically.
-#    Returns 202 with no body -- jobs are created asynchronously.
-curl -s -X POST -H "Authorization: Bearer $GALTEA_API_KEY" -H "Content-Type: application/json" \
-  "$GALTEA_API_URL/evaluations/fromVersion" \
-  -d '{"versionId":"<versionId>"}'
-
-# 4. List the created evaluations to grab their IDs (the POST returned no body)
-curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
-  "$GALTEA_API_URL/evaluations?versionIds=<versionId>&statuses=PENDING&sort=-createdAt&limit=20" \
-  | jq '.[] | {id, metricId, status}'
-
-# 5. Poll one until it settles (SUCCESS / FAILED / SKIPPED)
-curl -s -H "Authorization: Bearer $GALTEA_API_KEY" \
-  "$GALTEA_API_URL/evaluations/<evalId>" | jq '{id, status, score, reason}'
-```
-
-### Evaluation creation paths
-
-The worked example above uses `fromVersion`. Choose the right path based on what the user wants to evaluate:
+Choose the right creation path based on what the user wants to evaluate. For a complete end-to-end curl walkthrough of the `fromVersion` path (find product -> find version -> POST -> list PENDING -> poll), read [references/evaluate-version.md](references/evaluate-version.md) -- fetch it whenever the user asks to run a full evaluation pass on a version, kick off evaluations, or needs to see the async lifecycle concretely.
 
 | User goal | Endpoint | Key input | Notes |
 |---|---|---|---|
@@ -211,7 +174,7 @@ The worked example above uses `fromVersion`. Choose the right path based on what
 | Bulk evaluate many items | `POST /evaluations/batch` | Array of evaluation items | Check OpenAPI for the batch body schema |
 | Re-run failed evaluations | `POST /evaluations/retry` | `evaluationIds` | Only retries evaluations with `FAILED` status |
 
-All creation endpoints return `202` with no body. List evaluations afterward to get the created IDs (see step 4 above).
+All creation endpoints return `202` with no body. After calling, list evaluations filtered by the matching scope (`versionIds`, `sessionIds`, `inferenceResultIds`) with `statuses=PENDING` to learn the newly-created IDs, then poll each until `status` reaches `SUCCESS`, `FAILED`, `SKIPPED`, or `PENDING_HUMAN` (terminal for polling -- waits for a human reviewer).
 
 ## Common Workflows
 
