@@ -32,25 +32,7 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ### Entity hierarchy
 
-Entities follow a hierarchy. Understanding it is essential for picking the right API calls.
-
-```
-Product
- |- Version              (an iteration of the product to compare over time)
- |   +- Session          (a full conversation: one or more turns)
- |       |- Inference Result   (a single user-turn + AI-response pair)
- |       |   |- Trace          (internal agent operations for that turn)
- |       |   +- Evaluation     (score for a single turn; created via fromInferenceResult)
- |       +- Evaluation         (score for the whole conversation; created via fromSession)
- |- Specification        (a behavioral rule the product should follow)
- |   |- links to Metrics (how to score compliance with this spec)
- |   +- links to Tests   (test data to exercise this spec)
- |- Test                 (a dataset of TestCases)
- |   +- TestCase         (one input scenario; may include ground truth)
- |- Metric               (scoring criteria: AI-judge prompt, deterministic, or human)
- |- EndpointConnection   (URL + auth to call the user AI product from the platform)
- +- Model                (an LLM model tracked for a product)
-```
+See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everything-connects) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test`, `Metric`, `EndpointConnection`, and `Model`; `Version -> Session -> Inference Result -> Trace`; an `Evaluation` attaches at the turn level (fromInferenceResult) or the conversation level (fromSession).
 
 **Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `fromVersion` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
 
