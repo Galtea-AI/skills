@@ -87,14 +87,14 @@ GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
 GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key 2>/dev/null)}"
 ```
 
-If that leaves `$GALTEA_API_KEY` empty, run the paste-and-validate flow below. Claude Code's Bash tool resets shell state between calls, so you must run this resolver at the top of every Galtea bash call -- do not assume a prior `export` persists.
+If that leaves `$GALTEA_API_KEY` empty, run the paste-and-validate flow below. Many agents reset shell state between bash invocations, so you must run this resolver at the top of every Galtea bash call -- do not assume a prior `export` persists.
 
 ### First-time paste flow
 
 When no key is available:
 
 1. Tell the user: *"Open https://platform.galtea.ai, go to **Settings**, then **API Key** section. Copy your existing key (starts with `gsk_`), or click **Generate API Key** if you do not have one. Each account has a single key -- regenerating permanently replaces it. Paste it here as plain text."*
-2. Receive the pasted value as sensitive free-text. Do **not** use `AskUserQuestion` for this -- pasting secrets into option metadata leaks them into logs.
+2. Receive the pasted value as sensitive free-text. Do **not** use any structured-question tool (e.g. Claude Code's `AskUserQuestion`) for this -- pasting secrets into option metadata leaks them into logs.
 3. Cache the key at `~/.galtea/api-key` with file mode `600` (readable only by your OS user):
    ```bash
    umask 077 && mkdir -p ~/.galtea && printf '%s' "$PASTED_KEY" | sed 's/[[:space:]]//g' > ~/.galtea/api-key

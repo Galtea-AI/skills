@@ -9,7 +9,7 @@ End-to-end flow for `POST /evaluations/fromVersion` -- the one-shot path that ca
 
 ## Before you start
 
-Run the resolver block from `SKILL.md`'s Authentication section at the top of every bash call below. Claude Code's Bash tool resets shell state between calls, so `$GALTEA_API_URL`, `$GALTEA_DOCS_URL`, and `$GALTEA_API_KEY` must be re-populated each time:
+Run the resolver block from `SKILL.md`'s Authentication section at the top of every bash call below. Many agents reset shell state between bash invocations, so `$GALTEA_API_URL`, `$GALTEA_DOCS_URL`, and `$GALTEA_API_KEY` must be re-populated each time:
 
 ```bash
 GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
