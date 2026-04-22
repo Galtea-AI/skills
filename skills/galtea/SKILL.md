@@ -2,7 +2,7 @@
 name: galtea
 description: Help users interact with the Galtea platform -- the AI product testing and evaluation platform for AI/LLM products. Covers authentication, managing products/versions/specifications/tests/metrics/endpoint-connections/evaluations/sessions/inference-results/traces, and wiring an AI product into Galtea for automated testing.
 when_to_use: Invoke when the user mentions Galtea, asks to run or inspect an evaluation, wants to create a product/version/test/metric, needs to debug a failed session or inference, or is trying to connect their AI product to Galtea's testing platform. Trigger phrases include "galtea", "run evaluation", "gsk_...", "testing my AI product", "list my products", "create a test".
-allowed-tools: WebFetch WebSearch Bash(curl *) Bash(jq *) Bash(grep *) Bash(cat *) Bash(ls *) Bash(stat *) Bash(mkdir *) Bash(chmod *) Bash(test *) Bash(date *) Bash(find *) Bash(rm *) Bash(echo *) Bash(printf *) Bash(tee *) Bash(env *) Bash(awk *) Bash(sed *) Bash(head *) Bash(tail *) Bash(wc *) Bash(sort *) Bash(uniq *) Bash(xmllint *) Bash(gh *)
+allowed-tools: WebFetch WebSearch Bash(curl *) Bash(jq *) Bash(grep *) Bash(cat *) Bash(ls *) Bash(stat *) Bash(mkdir *) Bash(chmod *) Bash(test *) Bash(date *) Bash(find *) Bash(rm -f ~/.galtea/api-key) Bash(echo *) Bash(printf *) Bash(tee *) Bash(env *) Bash(awk *) Bash(sed *) Bash(head *) Bash(tail *) Bash(wc *) Bash(sort *) Bash(uniq *) Bash(xmllint *) Bash(uname) Bash(gh *)
 ---
 
 # Galtea
@@ -11,7 +11,7 @@ Galtea is an AI product testing and evaluation platform. Teams use it to define 
 
 This skill helps the agent drive the Galtea REST API and advise on the Python SDK on behalf of the user: authenticate, discover the right docs and endpoints, then run or inspect evaluations. Source-of-truth details live in the OpenAPI spec and the docs; this file points at them rather than duplicating them.
 
-If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, then `/sdk/tutorials/writing-specifications`, then `/sdk/tutorials/run-test-based-evaluations` -- the shortest zero-to-evaluation path.
+If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, then `$GALTEA_DOCS_URL/sdk/tutorials/writing-specifications`, then `$GALTEA_DOCS_URL/sdk/tutorials/run-test-based-evaluations` -- the shortest zero-to-evaluation path.
 
 ## Quick Links
 
@@ -32,15 +32,16 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ### Entity hierarchy
 
-Entities follow a strict hierarchy. Understanding it is essential for picking the right API calls.
+Entities follow a hierarchy. Understanding it is essential for picking the right API calls.
 
 ```
 Product
  |- Version              (an iteration of the product to compare over time)
  |   +- Session          (a full conversation: one or more turns)
  |       |- Inference Result   (a single user-turn + AI-response pair)
- |       |   +- Trace          (internal agent operations for that turn)
- |       +- Evaluation         (a score for this session, using one Metric)
+ |       |   |- Trace          (internal agent operations for that turn)
+ |       |   +- Evaluation     (score for a single turn; created via fromInferenceResult)
+ |       +- Evaluation         (score for the whole conversation; created via fromSession)
  |- Specification        (a behavioral rule the product should follow)
  |   |- links to Metrics (how to score compliance with this spec)
  |   +- links to Tests   (test data to exercise this spec)
@@ -50,6 +51,8 @@ Product
  |- EndpointConnection   (URL + auth to call the user AI product from the platform)
  +- Model                (an LLM model tracked for a product)
 ```
+
+**Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `fromVersion` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
 
 **Specifications are the glue.** They connect metrics (how to score) with tests (what to score against). When the user triggers `fromVersion`, Galtea resolves all specifications for the product, finds their linked metrics and tests, and runs evaluations automatically.
 
@@ -71,7 +74,7 @@ Product
 ## Core Rules
 
 1. **Authenticate before any API call.** If `$GALTEA_API_KEY` is unset and no key is cached at `~/.galtea/api-key`, run the Authentication flow. Never hit the API without a key resolved.
-2. **Documentation first -- never implement from memory.** Galtea ships frequently; endpoints, metrics, and SDK APIs change. Before you advise on an endpoint, workflow, concept, or metric, fetch the relevant docs page (see Discover) or the exact slice of the OpenAPI spec (see Discover). Examples inlined here are illustrative, not authoritative.
+2. **Documentation first -- never implement from memory.** Galtea ships frequently; endpoints, metrics, and SDK APIs change. Before you advise on an endpoint, workflow, concept, or metric, fetch the relevant docs page (see Discover docs and endpoints) or the exact slice of the OpenAPI spec (see Discover docs and endpoints). Examples inlined here are illustrative, not authoritative.
 3. **Discover docs via `llms.txt`, then fetch pages as markdown.** The index at `$GALTEA_DOCS_URL/llms.txt` lists every docs page with title, URL, and one-line description. Grep it for the path prefix you need (`/sdk/tutorials/`, `/concepts/`, `/api-reference/`), then fetch the specific page -- every URL works with a `.md` suffix (`Content-Type: text/markdown`) for clean content. Do not guess URLs; do not page through `sitemap.xml` when `llms.txt` is available.
 4. **OpenAPI is the source of truth for endpoint shapes.** Fetch `$GALTEA_API_URL/openapi.json` (OpenAPI 3.0, ~180 KB, security scheme `bearerAuth` -- both `gsk_*` and `gsk-*` keys accepted) for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
 5. **Filter query params are usually plural** (`productIds`, `versionIds`, `testIds`, `metricIds`, `inferenceResultIds`), though a few endpoints accept singular. When in doubt, check `parameters` for the endpoint in `openapi.json` before guessing.
@@ -141,8 +144,10 @@ Both `llms.txt` and the OpenAPI spec are large; cache them under `/tmp` with a 2
 GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
 
 # Refresh if missing or older than 24h
+# (stat -c is GNU on Linux/WSL/Git Bash; stat -f is BSD on macOS)
+STAT_FMT=$([ "$(uname)" = "Darwin" ] && echo "-f %m" || echo "-c %Y")
 if [ ! -f /tmp/galtea-llms.txt ] || \
-   [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-llms.txt 2>/dev/null || echo 0) )) -gt 86400 ]; then
+   [ $(( $(date +%s) - $(stat $STAT_FMT /tmp/galtea-llms.txt 2>/dev/null || echo 0) )) -gt 86400 ]; then
   curl -s "$GALTEA_DOCS_URL/llms.txt" > /tmp/galtea-llms.txt
 fi
 
@@ -167,8 +172,10 @@ For end-to-end playbooks (creating a product, simulating conversations, tracing 
 GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
 
 # Refresh if missing or older than 24h
+# (stat -c is GNU on Linux/WSL/Git Bash; stat -f is BSD on macOS)
+STAT_FMT=$([ "$(uname)" = "Darwin" ] && echo "-f %m" || echo "-c %Y")
 if [ ! -f /tmp/galtea-openapi.json ] || \
-   [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-openapi.json 2>/dev/null || echo 0) )) -gt 86400 ]; then
+   [ $(( $(date +%s) - $(stat $STAT_FMT /tmp/galtea-openapi.json 2>/dev/null || echo 0) )) -gt 86400 ]; then
   curl -s "$GALTEA_API_URL/openapi.json" > /tmp/galtea-openapi.json
 fi
 
@@ -254,6 +261,7 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Run inferences from the platform (no SDK) | Configure EndpointConnection, trigger from Dashboard | `/sdk/tutorials/direct-inferences-and-evaluations-from-platform` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
 | Connect Langfuse traces | Send Langfuse traces to Galtea for evaluation | `/sdk/integrations/langfuse/overview` |
+| Track which LLM a version was tested with | Create/list Model records tied to the product | `/concepts/model` |
 
 To fetch any page: `curl -s "$GALTEA_DOCS_URL<path>.md"` or use `WebFetch`.
 
@@ -273,12 +281,12 @@ This skill can execute REST API calls via `curl` directly. For Python SDK guidan
 - Production monitoring with inline logging
 - The user is already writing Python
 
-**Key SDK concepts the agent should know about** (fetch docs before advising on details):
+**Key SDK capabilities** (fetch the relevant `/sdk/api/*` page in `llms.txt` before advising on the exact method -- identifiers below are routing hints only, not canonical names):
 
-- **Agent functions**: The SDK accepts three signatures for the user AI product: simple (`str -> str`), chat history (`list[dict] -> str`), and structured (`AgentInput -> AgentResponse`). The SDK auto-detects which one the user provides.
-- **Simulator**: `galtea.simulator.simulate()` plays the user role in multi-turn conversations, calling the agent function each turn.
-- **Tracing**: The `@trace` decorator and `start_trace()` context manager capture internal agent operations (tool calls, LLM calls) as Trace records.
-- **Inference generation**: `galtea.inference_results.generate()` calls the user agent function and records the result in one step.
+- **Agent function** -- the user's AI product, wrapped by the SDK. Multiple signatures are auto-detected; check the installation docs or `/sdk/api/*` for the current list.
+- **Simulator** -- plays the user role across multi-turn conversations, calling the agent each turn.
+- **Tracing** -- captures internal agent operations (tool calls, LLM calls) as Trace records; both decorator and context-manager forms are available.
+- **Inference generation** -- single-call utility that runs the agent and logs the inference result in one step.
 
 SDK API reference pages live under `/sdk/api/*` in `llms.txt`. The SDK and the REST API target the same backend, so mixing them in the same project is safe.
 
