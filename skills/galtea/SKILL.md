@@ -141,9 +141,9 @@ Both `llms.txt` and the OpenAPI spec are large; cache them under `/tmp` with a 2
 ### Docs index (`llms.txt`)
 
 ```bash
-# Refresh if missing or older than 24h (find -mtime +1 works on GNU and BSD find)
+# Refresh if missing or older than 24h (find -mmin +1440 works on GNU and BSD find)
 if [ ! -f /tmp/galtea-llms.txt ] || \
-   [ -n "$(find /tmp/galtea-llms.txt -mtime +1 2>/dev/null)" ]; then
+   [ -n "$(find /tmp/galtea-llms.txt -mmin +1440 2>/dev/null)" ]; then
   curl -s "$GALTEA_DOCS_URL/llms.txt" > /tmp/galtea-llms.txt
 fi
 
@@ -165,9 +165,9 @@ For end-to-end playbooks (creating a product, simulating conversations, tracing 
 ### OpenAPI spec
 
 ```bash
-# Refresh if missing or older than 24h (find -mtime +1 works on GNU and BSD find)
+# Refresh if missing or older than 24h (find -mmin +1440 works on GNU and BSD find)
 if [ ! -f /tmp/galtea-openapi.json ] || \
-   [ -n "$(find /tmp/galtea-openapi.json -mtime +1 2>/dev/null)" ]; then
+   [ -n "$(find /tmp/galtea-openapi.json -mmin +1440 2>/dev/null)" ]; then
   curl -s "$GALTEA_API_URL/openapi.json" > /tmp/galtea-openapi.json
 fi
 
