@@ -9,11 +9,11 @@ Follow these steps exactly.
 
 ## 1. Ask permission
 
-Ask the user whether they'd like you to submit feedback to the skill maintainers. Make it clear this is about *the skill* (the agent instructions you are reading), not about Galtea the product — product issues should go to `support@galtea.ai`. If they decline, move on.
+Ask the user whether they would like you to submit feedback to the skill maintainers. Make it clear this is about *the skill* (the agent instructions you are reading), not about Galtea the product -- product issues should go to `support@galtea.ai`. If they decline, move on.
 
 ## 2. Draft the feedback
 
-Write the feedback using the form below, present it to the user, and ask whether they'd like to change anything before submitting.
+Write the feedback using the form below, present it to the user, and ask whether they would like to change anything before submitting.
 
 **Describe the issue** (required)
 A clear description of what went wrong or what could be improved. Include:
@@ -47,7 +47,7 @@ EOF
   --jq '.html_url'
 ```
 
-The command prints the new issue URL on success — share it with the user.
+The command prints the new issue URL on success -- share it with the user.
 
 ### Fallback
 
@@ -57,8 +57,8 @@ If `gh` is not authenticated or the request fails, give the user this link to fi
 https://github.com/Galtea-AI/skills/issues/new?labels=skill-feedback,waiting-for-human-check&title=skill-feedback%3A%20&body=%23%23%20Describe%20the%20issue%0A%0A%23%23%20What%20would%20the%20ideal%20outcome%20look%20like%3F%0A
 ```
 
-## Don't
+## Do not
 
-- Don't submit product bug reports via this flow — those go to `support@galtea.ai`.
-- Don't self-assign or assign anyone else; leave the issue unassigned for triage.
-- Don't strip the `waiting-for-human-check` label — the team relies on it to identify AI-created issues.
+- Do not submit product bug reports via this flow -- those go to `support@galtea.ai`.
+- Do not self-assign or assign anyone else; leave the issue unassigned for triage.
+- Do not strip the `waiting-for-human-check` label -- the team relies on it to identify AI-created issues.
