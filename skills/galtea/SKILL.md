@@ -24,7 +24,7 @@ If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, t
 | Quickstart guide | `https://docs.galtea.ai/quickstart` | Onboard new users. |
 | SDK installation | `https://docs.galtea.ai/sdk/installation` | Python SDK setup (`pip install galtea`). |
 | Platform UI | `https://platform.galtea.ai` | Where users manage products, view results, and generate API keys. |
-| Product support | `support@galtea.ai` | For Galtea product issues (not skill issues). |
+| Product support | `mailto:support@galtea.ai` | For Galtea product issues (not skill issues). |
 
 Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quickstart.md`) to get clean markdown content.
 
@@ -84,7 +84,7 @@ Product
 |---|---|---|
 | `GALTEA_API_URL` | `https://api.galtea.ai` | Base URL for API calls and the OpenAPI spec. |
 | `GALTEA_DOCS_URL` | `https://docs.galtea.ai` | Base URL for docs, the sitemap, and the changelog. |
-| `GALTEA_API_KEY` | *(unset -- see Authentication)* | `gsk_*` bearer token scoped to the user Galtea organization. |
+| `GALTEA_API_KEY` | *(unset -- see Authentication)* | `gsk_*` bearer token scoped to the user's Galtea organization. |
 
 The changelog at `$GALTEA_DOCS_URL/changelog` lists every new metric, endpoint, and feature by date -- consult it when the user asks about something recent.
 
@@ -102,7 +102,7 @@ GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
 GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key 2>/dev/null)}"
 ```
 
-If that leaves `$GALTEA_API_KEY` empty, run the paste-and-validate flow below. Claude Code Bash tool resets shell state between calls, so you must run this resolver at the top of every Galtea bash call -- do not assume a prior `export` persists.
+If that leaves `$GALTEA_API_KEY` empty, run the paste-and-validate flow below. Claude Code's Bash tool resets shell state between calls, so you must run this resolver at the top of every Galtea bash call -- do not assume a prior `export` persists.
 
 ### First-time paste flow
 
@@ -234,9 +234,9 @@ All creation endpoints return `202` with no body. List evaluations afterward to 
 
 ## Common Workflows
 
-Each workflow below maps to a tutorial in the docs. Fetch the tutorial via `llms.txt` before advising -- the skill provides routing, not the full procedure.
+Each workflow below maps to a docs page. Fetch the page via `llms.txt` before advising -- the skill provides routing, not the full procedure.
 
-| User wants to... | Workflow | Tutorial path |
+| User wants to... | Workflow | Docs path |
 |---|---|---|
 | Get started from zero | Quickstart: create product, install SDK, create test, choose metric, run evaluation | `/quickstart` |
 | Define what their product should do | Write specifications, then auto-generate tests and metrics from them | `/sdk/tutorials/writing-specifications` |
@@ -255,7 +255,7 @@ Each workflow below maps to a tutorial in the docs. Fetch the tutorial via `llms
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
 | Connect Langfuse traces | Send Langfuse traces to Galtea for evaluation | `/sdk/integrations/langfuse/overview` |
 
-To fetch any tutorial: `curl -s "$GALTEA_DOCS_URL/sdk/tutorials/<slug>.md"` or use `WebFetch`.
+To fetch any page: `curl -s "$GALTEA_DOCS_URL<path>.md"` or use `WebFetch`.
 
 ## REST API vs Python SDK
 
@@ -301,7 +301,7 @@ When the user expresses that something about this skill is not working as expect
 - The user wishes the skill covered something it does not
 - The user explicitly says something like "this should work differently" or "this is wrong"
 
-**Do NOT trigger this** for issues with the Galtea product itself -- only for issues with this skill instructions and behavior. For product issues, direct the user to `support@galtea.ai`.
+**Do NOT trigger this** for issues with the Galtea product itself -- only for issues with this skill's instructions and behavior. For product issues, direct the user to `support@galtea.ai`.
 
 When triggered, follow the process in [references/skill-feedback.md](references/skill-feedback.md).
 

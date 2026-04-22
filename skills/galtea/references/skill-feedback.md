@@ -9,7 +9,7 @@ Follow these steps exactly.
 
 ## 1. Ask permission
 
-Ask the user whether they'd like you to submit feedback to the skill maintainers. Make it clear this is about *the skill* (the agent instructions you are reading), not about Galtea the product — product issues should go to `support@galtea.ai`. If they decline, move on.
+Ask the user whether they'd like you to submit feedback to the skill maintainers. Make it clear this is about *the skill* (the agent instructions you are reading), not about Galtea the product -- product issues should go to `support@galtea.ai`. If they decline, move on.
 
 ## 2. Draft the feedback
 
@@ -47,7 +47,7 @@ EOF
   --jq '.html_url'
 ```
 
-The command prints the new issue URL on success — share it with the user.
+The command prints the new issue URL on success -- share it with the user.
 
 ### Fallback
 
@@ -59,6 +59,6 @@ https://github.com/Galtea-AI/skills/issues/new?labels=skill-feedback,waiting-for
 
 ## Don't
 
-- Don't submit product bug reports via this flow — those go to `support@galtea.ai`.
+- Don't submit product bug reports via this flow -- those go to `support@galtea.ai`.
 - Don't self-assign or assign anyone else; leave the issue unassigned for triage.
-- Don't strip the `waiting-for-human-check` label — the team relies on it to identify AI-created issues.
+- Don't strip the `waiting-for-human-check` label -- the team relies on it to identify AI-created issues.
