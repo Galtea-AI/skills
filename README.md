@@ -35,7 +35,6 @@ You need a Galtea account and an API key:
 
 ```bash
 export GALTEA_API_KEY=gsk_...
-export GALTEA_BASE_URL=https://api.galtea.ai  # optional, defaults to cloud
 ```
 
 API keys are found in the Galtea dashboard under **Settings → API Keys**.

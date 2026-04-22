@@ -1,0 +1,30 @@
+name: Skill feedback
+description: Report that the Galtea skill gave incorrect guidance, is missing information, or could be improved.
+title: "skill-feedback: "
+labels: ["skill-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for feedback about the **skill** — the agent instructions in this repository. For issues with the Galtea product itself, email `support@galtea.ai` instead.
+  - type: textarea
+    id: issue
+    attributes:
+      label: Describe the issue
+      description: What went wrong or could be improved? Include what you were trying to do, what the skill did, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would the ideal outcome look like?
+      description: What should the skill have done or said?
+    validations:
+      required: false
+  - type: input
+    id: agent
+    attributes:
+      label: Agent / client
+      description: Which agent were you using? (e.g. Claude Code, Cursor, Windsurf)
+    validations:
+      required: false

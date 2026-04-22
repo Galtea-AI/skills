@@ -25,11 +25,9 @@ If the user is new to Galtea, send them through `$GALTEA_DOCS_URL/quickstart`, t
 
 ## Environment
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `GALTEA_API_URL` | `https://api.galtea.ai` | Base URL for API calls and the OpenAPI spec. Override to `https://dev.api.galtea.ai` for Galtea's development environment. |
-| `GALTEA_DOCS_URL` | `https://docs.galtea.ai` | Base URL for docs, the sitemap, and the changelog. |
-| `GALTEA_API_KEY` | *(unset — see Authentication)* | `gsk_*` bearer token scoped to the user's Galtea organization. |
+| Variable | Purpose |
+|---|---|
+| `GALTEA_API_KEY` | `gsk_*` bearer token scoped to the user's Galtea organization. Unset by default — see Authentication. |
 
 The changelog at `$GALTEA_DOCS_URL/changelog` lists every new metric, endpoint, and feature by date — consult it when the user asks about something recent.
 
@@ -39,7 +37,7 @@ The changelog at `$GALTEA_DOCS_URL/changelog` lists every new metric, endpoint, 
 
 Galtea uses bearer-token auth. Every request includes `-H "Authorization: Bearer $GALTEA_API_KEY"`.
 
-**Whenever you're about to make a Galtea API call**, start the bash call with this resolver block — it fills in defaults for the URL vars and loads the cached key, so the rest of the call can use `$GALTEA_API_URL`, `$GALTEA_DOCS_URL`, and `$GALTEA_API_KEY` freely:
+**Whenever you're about to make a Galtea API call**, start the bash call with this resolver block — it loads the cached key so the rest of the call can use `$GALTEA_API_KEY` freely:
 
 ```bash
 GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
@@ -76,15 +74,13 @@ rm -f ~/.galtea/api-key
 
 ## Discover docs and endpoints
 
-Both `llms.txt` and the OpenAPI spec are large; cache them under `/tmp` with a 24-hour TTL so you don't re-download each turn. Prepend the resolver block from Authentication to every bash call below (auth key is not strictly required for these unauthenticated fetches, but the URL defaults are).
+Both `llms.txt` and the OpenAPI spec are large; cache them under `/tmp` with a 24-hour TTL so you don't re-download each turn. Prepend the resolver block from Authentication to every bash call below.
 
 **Tool preference for doc fetching.** If your host agent provides `WebFetch` / `WebSearch` (Claude Code, Cursor, etc.), prefer them over `curl` — they handle summarization, caching, and large-page trimming for free. Use `curl` when you need raw bytes for a `jq` pipeline, when caching to `/tmp`, or when no native fetch tool is available.
 
 ### Docs index (`llms.txt`)
 
 ```bash
-GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
-
 # Refresh if missing or older than 24h
 if [ ! -f /tmp/galtea-llms.txt ] || \
    [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-llms.txt 2>/dev/null || echo 0) )) -gt 86400 ]; then
@@ -109,8 +105,6 @@ For end-to-end playbooks (creating a product, simulating conversations, tracing 
 ### OpenAPI spec
 
 ```bash
-GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
-
 # Refresh if missing or older than 24h
 if [ ! -f /tmp/galtea-openapi.json ] || \
    [ $(( $(date +%s) - $(stat -c %Y /tmp/galtea-openapi.json 2>/dev/null || echo 0) )) -gt 86400 ]; then
