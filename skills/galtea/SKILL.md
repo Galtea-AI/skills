@@ -32,7 +32,7 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ### Entity hierarchy
 
-See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everything-connects) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test`, `Metric`, `EndpointConnection`, and `Model`; `Version -> Session -> Inference Result -> Trace`; an `Evaluation` attaches at the turn level (fromInferenceResult) or the conversation level (fromSession).
+See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everything-connects) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test`, and `EndpointConnection`; `Metric` and `Model` live at the organization level (a `Version` references one `Model`, a `Specification` links to `Metric`s). `Version -> Session -> Inference Result -> Trace`; an `Evaluation` attaches at the turn level (fromInferenceResult) or the conversation level (fromSession).
 
 **Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `fromVersion` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
 
