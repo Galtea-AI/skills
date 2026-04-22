@@ -64,6 +64,7 @@ Fetch `/concepts/metrics` from the docs for the current, authoritative list.
 5. **Filter query params are usually plural** (`productIds`, `versionIds`, `testIds`, `metricIds`, `inferenceResultIds`), though a few endpoints accept singular. When in doubt, check `parameters` for the endpoint in `openapi.json` before guessing.
 6. **Evaluations are async.** Trigger via `POST /evaluations/from{Version,Session,InferenceResult}` (returns `202` with no body); list `/evaluations?...&statuses=PENDING` to fetch the created IDs, then poll `GET /evaluations/{id}` until `status` reaches `SUCCESS`, `FAILED`, or `SKIPPED`. `PENDING_HUMAN` means the evaluation is waiting for a human reviewer -- stop polling and surface it to the user.
 7. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
+8. **Discover your own org via `GET /auth/user`.** The authenticated user belongs to exactly one org, exposed as `organizationId` on the returned `User`. `GET /organizations` without filters returns `400 A filter is required`, so either pass `?ids=<id>` when you need the org record or call `GET /organizations/{id}/creditStatus` directly for credits.
 
 ## Environment
 
@@ -99,12 +100,11 @@ When no key is available:
    ```bash
    mkdir -p ~/.galtea && printf '%s' "$PASTED_KEY" | sed 's/[[:space:]]//g' > ~/.galtea/api-key && chmod 600 ~/.galtea/api-key
    ```
-4. Validate by hitting the credit-free `/organizations` endpoint (reads never consume credits) -- run the resolver block (above), then:
+4. Validate by hitting `/auth/user` (reads never consume credits) -- run the resolver block (above), then:
    ```bash
-   curl -s -H "Authorization: Bearer $GALTEA_API_KEY" "$GALTEA_API_URL/organizations" \
-     | jq '.[0] | {id, name, remainingSubscriptionCredits, extraCredits}'
+   curl -s -H "Authorization: Bearer $GALTEA_API_KEY" "$GALTEA_API_URL/auth/user"
    ```
-5. On success, report the organization name and remaining credits to the user. On `401`, tell them the key is invalid and loop back to step 1 (up to 3 tries before giving up).
+5. On a 2xx response, tell the user authentication succeeded. On `401`, tell them the key is invalid and loop back to step 1 (up to 3 tries before giving up).
 
 ### On 401 from a previously cached key
 
@@ -208,7 +208,7 @@ Runtime behaviors that are not documented in the OpenAPI spec -- these are the o
 - **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will fail. Workflow constraint, not a schema rule.
 - **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, tests, metrics, endpoint connections, user groups, models, evaluations). The body `message` follows `"A <Entity> with the same Name [and Type]? already exists..."` -- match on that substring to distinguish it from other 400s; do not blind-retry.
 - **Trace rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading.
-- **Credits are consumed** by evaluations and test generation only -- reads and auth are free. `GET /organizations` returns `remainingSubscriptionCredits` + `extraCredits` for a pre-flight check. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
+- **Credits are consumed** by evaluations and test generation only -- reads and auth are free. For a pre-flight check, call `GET /auth/user` to resolve `organizationId`, then `GET /organizations/{id}/creditStatus` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
 - **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `#/components/schemas/Error` (`{error: string, message: string}`). `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
 
 ## Skill Feedback
