@@ -75,7 +75,7 @@ Fetch `/concepts/metrics` from the docs for the current, authoritative list.
 
 The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endpoint, and feature by date -- consult it when the user asks about something recent.
 
-**Shell assumption.** The snippets in this skill target a POSIX shell (macOS, Linux, WSL, Git Bash). They rely on `jq`, `grep`, `find`, `chmod`, and Bash substitutions that do not work in native PowerShell or `cmd`. Windows users on native PowerShell should install WSL or Git Bash, or switch to the Python SDK -- install instructions at **https://docs.galtea.ai/sdk/installation** -- which is fully cross-platform.
+**Shell assumption.** The snippets use bash with `jq`, `grep`, `find`, `chmod`, and standard substitutions, and run inside the agent's harness -- they assume nothing about the user's local shell. They run unmodified on macOS, Linux, WSL, and on Windows when the agent's harness uses Git Bash (for example, Claude Code's default on Windows). If your harness only exposes native PowerShell or `cmd`, the Python SDK (`pip install galtea`, install instructions at **https://docs.galtea.ai/sdk/installation**) is the most reliable path -- it is fully cross-platform and exposes the same surface.
 
 ## Authentication
 
