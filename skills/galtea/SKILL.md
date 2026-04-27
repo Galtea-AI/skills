@@ -50,7 +50,7 @@ See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everyt
 
 The `MetricSource` enum drives this:
 
-- **AI-as-judge** (`FULL_PROMPT` / `PARTIAL_PROMPT`): An LLM scores the output. `FULL_PROMPT` uses a Galtea-template judge prompt; `PARTIAL_PROMPT` uses your own. User-creatable. Most common.
+- **AI-as-judge** (`FULL_PROMPT` / `PARTIAL_PROMPT`): An LLM scores the output against a user-written judge prompt. They differ in how the evaluation data is injected: in `FULL_PROMPT` the user writes the entire prompt and embeds `{placeholder}` markers for evaluation parameters inline (full control over format and ordering); in `PARTIAL_PROMPT` the user writes only the rubric and Galtea prepends a structured data block built from the separately-supplied `evaluation_params`. User-creatable. Most common.
 - **Human evaluation** (`HUMAN_EVALUATION`): A human reviewer scores via the platform. Requires `UserGroup`s. User-creatable.
 - **Self-hosted / user-computed** (`SELF_HOSTED`): You compute the score on your own infrastructure and upload it as a `float` -- either pre-calculated, or computed at runtime via an SDK custom-score class (see `/concepts/metric/evaluation-types` and `/sdk/tutorials/evaluate-with-custom-metrics` for current SDK class names). Never sent to an evaluator. User-creatable.
 - **Built-in deterministic** (`DETERMINISTIC`, `DEEPEVAL`): Platform-defined classic NLP and DeepEval metrics (BLEU, ROUGE, JSON field match, etc.). Galtea computes the score. **Not user-creatable** -- pick from the catalog.
