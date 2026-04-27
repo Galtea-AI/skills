@@ -32,11 +32,11 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ### Entity hierarchy
 
-See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everything-connects) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test`, and `EndpointConnection`; `Metric` and `Model` live at the organization level (a `Version` references one `Model`, a `Specification` links to `Metric`s). `Version -> Session -> Inference Result -> Trace`; an `Evaluation` attaches at the turn level (fromInferenceResult) or the conversation level (fromSession).
+See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everything-connects) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test` (which owns `TestCase`), and `EndpointConnection`. `Specification`s link to `Metric`s (many-to-many) and own/auto-derive `Test`s (one-to-many). `Metric` and `Model` are organization-scoped (some are global system entities with no org). A `Version` may optionally reference one `Model` (the LLM the product runs on); separately, `Metric`s reference an `EvaluatorModel` (the LLM-as-judge). `UserGroup`s (org-level) route human-evaluation `Metric`s to reviewers. Runtime chain: `Version -> Session -> InferenceResult -> Trace`, with `TestCase` optionally linked to `Session`. An `Evaluation` attaches at the turn level (`fromInferenceResult`) or the conversation level (`fromSession`).
 
 **Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `fromVersion` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
 
-**Specifications are the glue.** They connect metrics (how to score) with tests (what to score against). When the user triggers `fromVersion`, Galtea resolves all specifications for the product, finds their linked metrics and tests, and runs evaluations automatically.
+**Specifications are the glue.** They link metrics (how to score) and own/auto-derive tests (what to score against). When the user triggers `fromVersion`, Galtea resolves all specifications for the product, finds their linked metrics and derived tests, and runs evaluations automatically.
 
 ### Three evaluation approaches
 
