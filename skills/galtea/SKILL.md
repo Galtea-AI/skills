@@ -38,13 +38,14 @@ See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everyt
 
 **Specifications are the glue.** They connect metrics (how to score) with tests (what to score against). When the user triggers `fromVersion`, Galtea resolves all specifications for the product, finds their linked metrics and tests, and runs evaluations automatically.
 
-### Three evaluation approaches
+### Two evaluation contexts
 
-| Approach | When to use | Key concept |
+| Context | When to use | How it works |
 |---|---|---|
-| **Test-based** | Pre-deployment regression testing against synthetic or curated datasets | Create Tests + TestCases, run agent against them, evaluate |
-| **Conversation simulation** | Test multi-turn behavior with simulated users | Galtea simulator plays the user role, agent responds, then evaluate the session |
-| **Production monitoring** | Evaluate real user interactions after deployment | Log inference results from production, evaluate them asynchronously |
+| **Pre-deployment (test-based)** | Regression testing before release against curated or generated `TestCase`s | Create `Test` + `TestCase`s (`QUALITY` / `RED_TEAMING` / `SCENARIOS`), run the agent against them, evaluate. Direct invocation for single-turn; the Conversation Simulator for multi-turn (default for `SCENARIOS` / Behavior tests). |
+| **Production monitoring** | Evaluate real user interactions after deployment | Log `InferenceResult`s from production into a `Session` (single-turn or multi-turn), evaluate asynchronously. |
+
+**Multi-turn applies to both contexts.** A `Session` can hold many `InferenceResult`s regardless of origin. By default, only Behavior tests (`SCENARIOS`) are *generated* with multi-turn scenarios in mind (`goal`, `userPersona`, `stoppingCriterias`); `QUALITY` and `RED_TEAMING` tests can technically be multi-turn but are typically single-turn.
 
 ### Metric types (verify against docs)
 
