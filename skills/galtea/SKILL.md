@@ -105,7 +105,7 @@ When no key is available:
    ```bash
    curl -s -H "Authorization: Bearer $GALTEA_API_KEY" "$GALTEA_API_URL/auth/user"
    ```
-5. On a 2xx response, tell the user authentication succeeded. On `401`, tell them the key is invalid and loop back to step 1 (up to 3 tries before giving up).
+5. On a 2xx response, tell the user authentication succeeded. On `401`, tell them the key is invalid and ask again.
 
 ### On 401 from a previously cached key
 
