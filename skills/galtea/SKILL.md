@@ -75,7 +75,7 @@ Fetch `/concepts/metrics` from the docs for the current, authoritative list.
 
 The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endpoint, and feature by date -- consult it when the user asks about something recent.
 
-**Shell assumption.** The snippets use POSIX bash with `jq`, `grep`, `find`, `chmod`, and standard substitutions. They run unmodified on macOS, Linux, WSL, and on Windows when the agent's harness uses Git Bash (Claude Code's default on Windows; most other harnesses behave similarly). If your harness only exposes native PowerShell or `cmd`, either translate the snippets to that shell or recommend the Python SDK (`pip install galtea`, install instructions at **https://docs.galtea.ai/sdk/installation**) -- the SDK is fully cross-platform and exposes the same surface. Do not ask the user to install WSL or Git Bash; that is the agent's environment, not theirs.
+**Shell assumption.** The snippets use bash with `jq`, `grep`, `find`, `chmod`, and standard substitutions. They run unmodified on macOS, Linux, WSL, and on Windows when the agent's harness uses Git Bash (for example, Claude Code's default on Windows). If your harness only exposes native PowerShell or `cmd`, recommend the Python SDK (`pip install galtea`, install instructions at **https://docs.galtea.ai/sdk/installation**) -- the SDK is fully cross-platform and exposes the same surface. Do not attempt to translate the snippets to PowerShell or `cmd`; those environments typically lack `jq` / `grep` / `find` / `chmod` and a syntax translation will fail at runtime. Do not ask the user to install WSL or Git Bash; that is the agent's environment, not theirs.
 
 ## Authentication
 
