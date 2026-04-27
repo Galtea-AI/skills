@@ -48,12 +48,14 @@ See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everyt
 
 ### Metric types (verify against docs)
 
-- **AI-as-judge** (`FULL_PROMPT` / `PARTIAL_PROMPT`): An LLM scores the output using a judge prompt. Most common.
-- **Human evaluation** (`HUMAN_EVALUATION`): A human reviewer scores via the platform. Requires UserGroups.
-- **Deterministic**: Rule-based scoring (exact match, regex, etc.).
-- **Custom**: User-defined metrics with their own scoring logic.
+The `MetricSource` enum drives this:
 
-Fetch `/concepts/metrics` from the docs for the current, authoritative list.
+- **AI-as-judge** (`FULL_PROMPT` / `PARTIAL_PROMPT`): An LLM scores the output. `FULL_PROMPT` uses a Galtea-template judge prompt; `PARTIAL_PROMPT` uses your own. User-creatable. Most common.
+- **Human evaluation** (`HUMAN_EVALUATION`): A human reviewer scores via the platform. Requires `UserGroup`s. User-creatable.
+- **Self-hosted / user-computed** (`SELF_HOSTED`): You compute the score on your own infrastructure and upload it (pre-calculated `float`, or via the SDK's `CustomScoreEvaluationMetric` class). Never sent to an evaluator. User-creatable.
+- **Built-in deterministic** (`DETERMINISTIC`, `DEEPEVAL`): Platform-defined classic NLP and DeepEval metrics (BLEU, ROUGE, JSON field match, etc.). Galtea computes the score. **Not user-creatable** -- pick from the catalog.
+
+Custom-vs-built-in is orthogonal: users can create custom metrics in any of the user-creatable types above. Fetch `/concepts/metrics` and `/concepts/metric/evaluation-types` for the authoritative catalog.
 
 ## Core Rules
 
