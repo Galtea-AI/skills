@@ -49,12 +49,15 @@ See [How Everything Connects](https://docs.galtea.ai/concepts/product#how-everyt
 
 ### Metric types (verify against docs)
 
-- **AI-as-judge** (`FULL_PROMPT` / `PARTIAL_PROMPT`): An LLM scores the output using a judge prompt. Most common.
-- **Human evaluation** (`HUMAN_EVALUATION`): A human reviewer scores via the platform. Requires UserGroups.
-- **Deterministic**: Rule-based scoring (exact match, regex, etc.).
-- **Custom**: User-defined metrics with their own scoring logic.
+The `MetricSource` enum drives this:
 
-Fetch `/concepts/metrics` from the docs for the current, authoritative list.
+- **AI-as-judge** (`PARTIAL_PROMPT`): An LLM scores the output against a user-written judge rubric; Galtea prepends a structured data block built from the separately-supplied `evaluation_params`. User-creatable. Most common. **Use this for any new AI-as-judge metric.**
+- **`FULL_PROMPT` (do not use for new metrics):** Legacy AI-as-judge variant where the user writes the entire prompt, including the location of the data (`evaluation_params`). Still supported for existing metrics, but **do not create new metrics with `FULL_PROMPT`**. Use `PARTIAL_PROMPT` instead.
+- **Human evaluation** (`HUMAN_EVALUATION`): A human reviewer scores via the platform. Requires `UserGroup`s. User-creatable.
+- **Self-hosted / user-computed** (`SELF_HOSTED`): You compute the score on your own infrastructure and upload it as a `float` -- either pre-calculated, or computed at runtime via an SDK custom-score class (see `/concepts/metric/evaluation-types` and `/sdk/tutorials/evaluate-with-custom-metrics` for current SDK class names). User-creatable.
+- **Built-in deterministic** (`DETERMINISTIC`, `DEEPEVAL`): Platform-defined classic NLP and DeepEval metrics (BLEU, ROUGE, JSON field match, etc.). Galtea computes the score. **Not user-creatable** -- pick from the catalog.
+
+Custom-vs-built-in is orthogonal: users can create custom metrics in any of the user-creatable types above. Fetch `/concepts/metrics` and `/concepts/metric/evaluation-types` for the authoritative catalog.
 
 ## Core Rules
 
