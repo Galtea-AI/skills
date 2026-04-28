@@ -77,6 +77,18 @@ The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endp
 
 **Shell assumption.** The snippets use bash with `jq`, `grep`, `find`, `chmod`, and standard substitutions, and run inside the agent's harness -- they assume nothing about the user's local shell. They run unmodified on macOS, Linux, WSL, and on Windows when the agent's harness uses Git Bash (for example, Claude Code's default on Windows). If your harness only exposes native PowerShell or `cmd`, the Python SDK (`pip install galtea`, install instructions at **https://docs.galtea.ai/sdk/installation**) is the most reliable path -- it is fully cross-platform and exposes the same surface.
 
+**Tool availability.** `bash`, `curl`, `grep`, `find`, and `chmod` ship with Git Bash and most POSIX environments. **`jq` often does not** -- default Git Bash installs on Windows lack it. Run `jq --version` once before relying on the snippets; if it returns "command not found", fall back to Python, which is available in essentially every harness without an install. Every `jq` query the skill uses has a drop-in Python equivalent:
+
+```bash
+# jq form
+jq '.paths."/evaluations/fromVersion".post' /tmp/galtea-openapi.json
+
+# Python form (drop-in replacement)
+python -c "import json; s=json.load(open('/tmp/galtea-openapi.json')); print(json.dumps(s['paths']['/evaluations/fromVersion']['post'], indent=2))"
+```
+
+The skill keeps writing snippets in `jq` for readability; substitute the Python form where your harness lacks `jq`. Do not install `jq` on the user's machine without their explicit consent -- the Python fallback covers the same job without modifying their environment.
+
 ## Authentication
 
 Galtea uses bearer-token auth. Every request includes `-H "Authorization: Bearer $GALTEA_API_KEY"`.
