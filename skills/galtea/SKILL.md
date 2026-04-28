@@ -83,11 +83,11 @@ The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endp
 # jq form
 jq '.paths."/evaluations/fromVersion".post' /tmp/galtea-openapi.json
 
-# Python form (drop-in replacement)
-python -c "import json; s=json.load(open('/tmp/galtea-openapi.json')); print(json.dumps(s['paths']['/evaluations/fromVersion']['post'], indent=2))"
+# Python form (drop-in replacement; pipe the file in via shell redirection)
+python -c "import json, sys; s=json.load(sys.stdin); print(json.dumps(s['paths']['/evaluations/fromVersion']['post'], indent=2))" < /tmp/galtea-openapi.json
 ```
 
-The skill keeps writing snippets in `jq` for readability; substitute the Python form where your harness lacks `jq`. Do not install `jq` on the user's machine without their explicit consent -- the Python fallback covers the same job without modifying their environment.
+The skill keeps writing snippets in `jq` for readability; substitute the Python form where your harness lacks `jq`. Always pass the JSON file via shell redirection (`< /tmp/...`) and read from `sys.stdin` -- Git Bash on Windows does **not** translate POSIX paths embedded inside `python -c` string arguments (the file lookup runs in native Windows Python, which sees `/tmp/...` literally and fails with `FileNotFoundError`); the redirection avoids that, and reading bytes through `sys.stdin` also sidesteps the CP1252 default-encoding gotcha when the spec contains non-ASCII characters. Do not install `jq` on the user's machine without their explicit consent -- the Python fallback covers the same job without modifying their environment.
 
 ## Authentication
 
