@@ -66,7 +66,7 @@ Custom-vs-built-in is orthogonal: users can create custom metrics in any of the 
 2. **Documentation first -- never advise from memory.** Galtea ships frequently; commands, metrics, and SDK APIs change. Before you advise on a workflow, concept, or argument shape, fetch the relevant docs page (see "Discover docs and commands" below) and run `galtea <noun> <verb> --help` for the live argument shape. Examples inlined here are illustrative, not authoritative.
 3. **Discover commands via `galtea --help`.** `galtea --help` lists every resource (`products`, `evaluations`, `sessions`, ...); `galtea <noun> --help` lists verbs under a resource; `galtea <noun> <verb> --help` shows the example invocation, request schema, and response schema for one operation. After the API ships new endpoints, run `galtea sync` to refresh the local spec cache.
 4. **Argument syntax depends on the HTTP verb.** GET / list operations expose query params as kebab-case `--flag` arguments (e.g. `galtea evaluations list --version-ids v1,v2 --statuses PENDING`). POST / create / update operations take body fields via Restish's inline shorthand (e.g. `galtea evaluations create-from-version versionId: ver_xxx`) or JSON on stdin (e.g. `echo '{"versionId":"v1"}' | galtea evaluations create-from-version`). The `EXAMPLES` block in `--help` shows the right form for each operation.
-5. **Evaluations are async, but the create response shape varies.** `galtea evaluations create-from-version` returns `202` with `{jobId, message, specifications, testCaseCount}` -- the rows have not been created yet, so list them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs. The other three create paths (`create-from-session`, `create-from-inference-result`, `create-single-turn`) return `201` with the array of `Evaluation` rows already persisted -- pull IDs straight from that response, no listing step needed. In every case the rows start at `status: PENDING`; poll `galtea evaluations get <id>` until `status` reaches `SUCCESS`, `FAILED`, or `SKIPPED`. `PENDING_HUMAN` means the evaluation is waiting for a human reviewer -- stop polling and surface it to the user.
+5. **Evaluations are async, but the create response shape varies.** `galtea evaluations create-from-version` returns `202` with `{jobId, message, specifications, testCaseCount}` -- the rows have not been created yet, so list them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs. The other three create paths (`create-from-session`, `create-from-inference-result`, `create-single-turn`) return `201` with the array of `Evaluation` rows already persisted -- pull IDs straight from that response, no listing step needed. In every case the rows start at `status: PENDING`; **batch-poll** with `galtea evaluations list --ids <id1>,<id2>,...` (one HTTP request per poll cycle regardless of count) -- or, when the IDs share a scope, re-use the original `list --version-ids …` / `--session-ids …` filter. Only fall back to `galtea evaluations get <id>` when you have a single ID and need its full detail. Stop when no rows remain at `status: PENDING`. Terminal states are `SUCCESS`, `FAILED`, `SKIPPED`, and `PENDING_HUMAN` (waits for a human reviewer -- treat as terminal for polling and surface to the user).
 6. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
 7. **Discover the user's org via `galtea auth get-current-user`.** The authenticated user belongs to exactly one org, exposed as `organizationId` on the returned `User`. For credit status: `galtea organizations get-credit-status <organizationId>` (positional id).
 
@@ -211,19 +211,25 @@ Choose the right creation command based on what the user wants to evaluate. For 
 The four create paths split into two groups by response shape:
 
 - **`create-from-version` -- async, returns 202 + `jobId`.** The actual evaluation rows are created in the background. List them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs (this is the path walked end-to-end in [references/evaluate-version.md](references/evaluate-version.md)).
-- **`create-from-session`, `create-from-inference-result`, `create-single-turn` -- synchronous-creation, return 201 + array of `Evaluation` rows.** Pull IDs straight from the response; no listing step needed:
+- **`create-from-session`, `create-from-inference-result`, `create-single-turn` -- synchronous-creation, return 201 + array of `Evaluation` rows.** Pull IDs straight from the response; no separate listing step needed. Then **batch-poll** the whole set in one call:
 
   ```bash
-  # Capture the array, extract IDs, poll each
-  IDS=$(galtea evaluations create-from-session sessionId: <sessionId> -o json | jq -r '.[].id')
-  for id in $IDS; do
-    galtea evaluations get "$id" -o json | jq '{id, status, score}'
+  # Capture the array, build a comma-separated id list, then poll the batch.
+  # `list --ids` returns the full Evaluation rows (with current status) in one HTTP request,
+  # avoiding the N-call overhead of looping `evaluations get` per id.
+  IDS=$(galtea evaluations create-from-session sessionId: <sessionId> -o json | jq -r '[.[].id] | join(",")')
+  galtea evaluations list --ids "$IDS" -o json | jq '.[] | {id, status, score}'
+
+  # Loop until none are PENDING (PENDING_HUMAN is terminal for polling).
+  while [ "$(galtea evaluations list --ids "$IDS" --statuses PENDING -o json | jq 'length')" -gt 0 ]; do
+    sleep 5
   done
+  galtea evaluations list --ids "$IDS" -o json | jq '.[] | {id, status, score}'
   ```
 
   Substitute `create-from-inference-result` (with `inferenceResultId: <id>`) or `create-single-turn` (see `--help` for the body shape) -- the response shape and follow-up polling are identical.
 
-In both groups, individual evaluations start at `status: PENDING` and reach `SUCCESS` / `FAILED` / `SKIPPED` / `PENDING_HUMAN` as workers process them. Poll `galtea evaluations get <id>` until terminal (treat `PENDING_HUMAN` as terminal for polling -- it waits for a human reviewer).
+In both groups, individual evaluations start at `status: PENDING` and reach `SUCCESS` / `FAILED` / `SKIPPED` / `PENDING_HUMAN` as workers process them. Prefer `galtea evaluations list --ids …` (or `--version-ids` / `--session-ids` if the scope already filters them) over a per-id loop with `evaluations get`; the batch call traffics one HTTP request per poll cycle regardless of how many evaluations you queued. Treat `PENDING_HUMAN` as terminal for polling -- it waits for a human reviewer.
 
 ## Common Workflows
 

@@ -33,8 +33,17 @@ galtea evaluations list \
   --limit 20 \
   -o json | jq '.[] | {id, metricId, status}'
 
-# 5. Poll one until it settles (SUCCESS / FAILED / SKIPPED)
-galtea evaluations get <evalId> -o json | jq '{id, status, score, reason}'
+# 5. Batch-poll the whole set with the same list call (without the --statuses filter
+#    you can re-use it as a snapshot; with --statuses PENDING it tells you whether
+#    any are still pending). One HTTP request per poll cycle, regardless of count.
+while [ "$(galtea evaluations list --version-ids <versionId> --statuses PENDING -o json | jq 'length')" -gt 0 ]; do
+  sleep 5
+done
+
+# Final snapshot: every evaluation for this version with its terminal status.
+# (PENDING_HUMAN entries stay listed -- they're terminal for polling, awaiting a human reviewer.)
+galtea evaluations list --version-ids <versionId> -o json \
+  | jq '.[] | {id, metricId, status, score, reason}'
 ```
 
 For body fields on the create call (`versionId`, optional `specificationIds`), the CLI uses Restish's inline shorthand: `key: value` pairs, comma-separated, with arrays in `[a, b, c]` form. To pass multiple specifications:
