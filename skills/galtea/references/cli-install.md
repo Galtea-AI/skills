@@ -19,7 +19,7 @@ If the user has Python 3.9+:
 pip install galtea-cli
 ```
 
-The `galtea-cli` PyPI package ships per-platform wheels that bundle the same `galtea` binary used by every other channel. The console-script entry point lands in pip's user-scripts directory (typically `~/.local/bin` on Linux/macOS, `%APPDATA%\Python\Scripts` on Windows); on most systems that directory is already on `PATH`, but if `galtea --version` cannot be found after install, see Troubleshooting below. To upgrade later: `pip install --upgrade galtea-cli`.
+The `galtea-cli` PyPI package ships per-platform wheels that bundle the same `galtea` binary used by every other channel. The console-script entry point lands in pip's user-scripts directory (typically `~/.local/bin` on Linux/macOS, under `%APPDATA%\Python\` on Windows -- the exact subdirectory is version-suffixed, e.g. `Python313\Scripts`). On most systems that directory is already on `PATH`; if `galtea --version` cannot be found after install, see Troubleshooting below for the canonical lookup. To upgrade later: `pip install --upgrade galtea-cli`.
 
 For a PATH-safe isolated install (recommended when the user already uses pipx or wants the CLI separated from project venvs): `pipx install galtea-cli`.
 

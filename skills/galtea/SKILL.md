@@ -210,8 +210,18 @@ Choose the right creation command based on what the user wants to evaluate. For 
 
 The four create paths split into two groups by response shape:
 
-- **`create-from-version` -- async, returns 202 + `jobId`.** The actual evaluation rows are created in the background. List them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs.
-- **`create-from-session`, `create-from-inference-result`, `create-single-turn` -- synchronous-creation, return 201 + array of `Evaluation` rows.** Pull IDs straight from the response; no listing step needed.
+- **`create-from-version` -- async, returns 202 + `jobId`.** The actual evaluation rows are created in the background. List them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs (this is the path walked end-to-end in [references/evaluate-version.md](references/evaluate-version.md)).
+- **`create-from-session`, `create-from-inference-result`, `create-single-turn` -- synchronous-creation, return 201 + array of `Evaluation` rows.** Pull IDs straight from the response; no listing step needed:
+
+  ```bash
+  # Capture the array, extract IDs, poll each
+  IDS=$(galtea evaluations create-from-session sessionId: <sessionId> -o json | jq -r '.[].id')
+  for id in $IDS; do
+    galtea evaluations get "$id" -o json | jq '{id, status, score}'
+  done
+  ```
+
+  Substitute `create-from-inference-result` (with `inferenceResultId: <id>`) or `create-single-turn` (see `--help` for the body shape) -- the response shape and follow-up polling are identical.
 
 In both groups, individual evaluations start at `status: PENDING` and reach `SUCCESS` / `FAILED` / `SKIPPED` / `PENDING_HUMAN` as workers process them. Poll `galtea evaluations get <id>` until terminal (treat `PENDING_HUMAN` as terminal for polling -- it waits for a human reviewer).
 
@@ -245,7 +255,7 @@ This skill drives the `galtea` CLI by default -- it covers everything the REST A
 Runtime behaviors that are not in `--help` text -- these are the only items a well-informed agent still needs explicit reminders for.
 
 - **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will be skipped silently. Workflow constraint, not a schema rule.
-- **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, tests, metrics, endpoint connections, user groups, models, evaluations). The body `message` follows `"A <Entity> with the same Name [and Type]? already exists..."` -- match on that substring to distinguish it from other 400s; do not blind-retry.
+- **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, tests, metrics, endpoint connections, user groups, models, sessions, specifications, evaluations). The body `message` consistently contains the substring `"with the same"` followed by the colliding fields, but the surrounding wording varies per entity. Examples: `"A Product with the same Name already exists."`, `"A Test with the same Name and Type already exists."`, `"An EndpointConnection with the same name already exists for this product."`, `"A Specification with the same description and type already exists for this product."`, `"An Evaluation with the same Version and Test already exists."`, `"A Session with the same customId: '...' already exists for version with ID: '...'."`. Match on `"with the same"` (case-insensitive) to distinguish unique-constraint violations from other 400s; do not blind-retry.
 - **Trace rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading.
 - **Credits are consumed** by evaluations and test generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
 - **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `{error: string, message: string}`. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
