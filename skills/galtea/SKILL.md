@@ -193,7 +193,7 @@ galtea X Y -o json | jq …   # pipe through jq for ad-hoc filtering
 galtea X Y -f body.id       # restish result filter (single field, no jq needed)
 ```
 
-For debugging an HTTP-level issue, add `--verbose` to any command -- the CLI prints the underlying request/response. (Note: `-v` is bound to `--version`, not `--verbose`.)
+For debugging an HTTP-level issue, add `-v` or `--verbose` to any command -- the CLI prints the underlying request/response. (Note: `-V` is bound to `--version`; both `-v` and `--verbose` enable HTTP debug output.)
 
 ## Evaluation creation paths
 
