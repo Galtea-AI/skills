@@ -19,9 +19,9 @@ If the user has Python 3.9+:
 pip install galtea-cli
 ```
 
-The `galtea-cli` PyPI package ships per-platform wheels that bundle the same `galtea` binary used by every other channel. The console-script entry point lands on `PATH` automatically. To upgrade later: `pip install --upgrade galtea-cli`.
+The `galtea-cli` PyPI package ships per-platform wheels that bundle the same `galtea` binary used by every other channel. The console-script entry point lands in pip's user-scripts directory (typically `~/.local/bin` on Linux/macOS, `%APPDATA%\Python\Scripts` on Windows); on most systems that directory is already on `PATH`, but if `galtea --version` cannot be found after install, see Troubleshooting below. To upgrade later: `pip install --upgrade galtea-cli`.
 
-If the user prefers an isolated install: `pipx install galtea-cli`.
+For a PATH-safe isolated install (recommended when the user already uses pipx or wants the CLI separated from project venvs): `pipx install galtea-cli`.
 
 ## Linux (Debian / Ubuntu) -- apt
 
@@ -79,6 +79,6 @@ A version string (e.g. `galtea version 4.x.y`) confirms the binary is on `PATH`.
 
 - **`galtea: command not found`** after install -- see PATH note above.
 - **GPG key import failed** on apt -- confirm the user has `curl` and that `https://pkgs.galtea.ai` is reachable from their network.
-- **`No module named pip`** -- install pip first (`python3 -m ensurepip --upgrade` on most systems).
+- **`No module named pip`** -- install pip first. On most systems: `python3 -m ensurepip --upgrade`. Debian/Ubuntu often ship Python with `ensurepip` disabled, in which case use the system package manager: `sudo apt install python3-pip`. Fedora/RHEL: `sudo dnf install python3-pip`.
 
 For anything not covered above, point the user at `support@galtea.ai` (product issue) or open feedback on this skill via [skill-feedback.md](skill-feedback.md) (skill issue).

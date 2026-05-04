@@ -33,9 +33,9 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ### Entity hierarchy
 
-See [Concepts Overview](https://docs.galtea.ai/concepts/overview) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test` (which owns `TestCase`), and `EndpointConnection`. `Specification`s link to `Metric`s (many-to-many) and to `Test`s (one-to-many; the `Test` is owned by the `Product`, the spec drives auto-derivation). `Metric` and `Model` are organization-scoped (some are global system entities with no org). A `Version` may optionally reference one `Model` (the LLM the product runs on); separately, `Metric`s reference an `EvaluatorModel` (the LLM-as-judge). `UserGroup`s (org-level) route human-evaluation `Metric`s to reviewers. Runtime chain: `Version -> Session -> InferenceResult -> Trace`, with `TestCase` optionally linked to `Session`. An `Evaluation` attaches at the turn level (`fromInferenceResult`) or the conversation level (`fromSession`).
+See [Concepts Overview](https://docs.galtea.ai/concepts/overview) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test` (which owns `TestCase`), and `EndpointConnection`. `Specification`s link to `Metric`s (many-to-many) and to `Test`s (one-to-many; the `Test` is owned by the `Product`, the spec drives auto-derivation). `Metric` and `Model` are organization-scoped (some are global system entities with no org). A `Version` may optionally reference one `Model` (the LLM the product runs on); separately, `Metric`s reference an `EvaluatorModel` (the LLM-as-judge). `UserGroup`s (org-level) route human-evaluation `Metric`s to reviewers. Runtime chain: `Version -> Session -> InferenceResult -> Trace`, with `TestCase` optionally linked to `Session`. An `Evaluation` attaches at the turn level (via `create-from-inference-result`) or the conversation level (via `create-from-session`).
 
-**Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `fromVersion` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
+**Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `create-from-version` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
 
 **Specifications are the glue.** They link metrics (how to score) and drive auto-derivation of tests (what to score against; tests are owned by the product). When the user triggers `create-from-version`, Galtea resolves all specifications for the product, finds their linked metrics and derived tests, and runs evaluations automatically.
 
@@ -68,7 +68,7 @@ Custom-vs-built-in is orthogonal: users can create custom metrics in any of the 
 4. **Argument syntax depends on the HTTP verb.** GET / list operations expose query params as kebab-case `--flag` arguments (e.g. `galtea evaluations list --version-ids v1,v2 --statuses PENDING`). POST / create / update operations take body fields via Restish's inline shorthand (e.g. `galtea evaluations create-from-version versionId: ver_xxx`) or JSON on stdin (e.g. `echo '{"versionId":"v1"}' | galtea evaluations create-from-version`). The `EXAMPLES` block in `--help` shows the right form for each operation.
 5. **Evaluations are async, but the create response shape varies.** `galtea evaluations create-from-version` returns `202` with `{jobId, message, specifications, testCaseCount}` -- the rows have not been created yet, so list them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs. The other three create paths (`create-from-session`, `create-from-inference-result`, `create-single-turn`) return `201` with the array of `Evaluation` rows already persisted -- pull IDs straight from that response, no listing step needed. In every case the rows start at `status: PENDING`; poll `galtea evaluations get <id>` until `status` reaches `SUCCESS`, `FAILED`, or `SKIPPED`. `PENDING_HUMAN` means the evaluation is waiting for a human reviewer -- stop polling and surface it to the user.
 6. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
-7. **Discover the user's org via `galtea auth get-current-user`.** The authenticated user belongs to exactly one org, exposed as `organizationId` on the returned `User`. For credit status: `galtea organizations get-credit-status` (run `--help` for the exact arg shape).
+7. **Discover the user's org via `galtea auth get-current-user`.** The authenticated user belongs to exactly one org, exposed as `organizationId` on the returned `User`. For credit status: `galtea organizations get-credit-status <organizationId>` (positional id).
 
 ## Environment
 
@@ -188,12 +188,12 @@ The CLI re-parents every OpenAPI operation under a `<noun>` parent generated fro
 
 ```bash
 galtea X Y                  # JSON (default for endpoint responses)
-galtea X Y -o table         # human-readable table where the response is a list
+galtea X Y -o table         # only valid against array/list responses; objects and error bodies render as JSON
 galtea X Y -o json | jq …   # pipe through jq for ad-hoc filtering
 galtea X Y -f body.id       # restish result filter (single field, no jq needed)
 ```
 
-For debugging an HTTP-level issue, add `-v` / `--verbose` to any command -- the CLI prints the underlying request/response.
+For debugging an HTTP-level issue, add `--verbose` to any command -- the CLI prints the underlying request/response. (Note: `-v` is bound to `--version`, not `--verbose`.)
 
 ## Evaluation creation paths
 
@@ -247,7 +247,7 @@ Runtime behaviors that are not in `--help` text -- these are the only items a we
 - **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will be skipped silently. Workflow constraint, not a schema rule.
 - **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, tests, metrics, endpoint connections, user groups, models, evaluations). The body `message` follows `"A <Entity> with the same Name [and Type]? already exists..."` -- match on that substring to distinguish it from other 400s; do not blind-retry.
 - **Trace rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading.
-- **Credits are consumed** by evaluations and test generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
+- **Credits are consumed** by evaluations and test generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
 - **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `{error: string, message: string}`. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
 - **`galtea sync` is needed after API releases.** If `galtea <noun> <verb>` returns "unknown command" but the docs say it exists, the local spec cache is stale -- run `galtea sync` and retry.
 
