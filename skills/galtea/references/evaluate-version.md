@@ -23,13 +23,19 @@ galtea versions list --product-ids <productId> -o json | jq '.[] | {id, name}'
 # 3. Kick off evaluations for the whole version. Galtea resolves the product's
 #    specifications, their linked metrics, and their linked tests automatically.
 #    Returns 202 with a jobId -- the actual evaluations are created asynchronously.
-galtea evaluations create-from-version versionId: <versionId>
+#    </dev/null on the inline-shorthand form is required in non-TTY contexts
+#    (scripts, CI, agent harnesses); without it the command blocks on stdin
+#    even though the inline body is complete. See SKILL.md Gotchas.
+galtea evaluations create-from-version versionId: <versionId> </dev/null
 
-# 4. List the freshly-created evaluations to grab their IDs (the create call only returned a job id)
+# 4. List the freshly-created evaluations to grab their IDs (the create call only returned a job id).
+#    --sort takes alternating `field,direction` pairs. Don't use a leading `-` for descending
+#    (e.g. `--sort -createdAt`) -- the CLI parses `-createdAt` as a short-flag combination
+#    and `-t` (the --rsh-timeout shorthand) consumes `edAt` as a duration value, then panics.
 galtea evaluations list \
   --version-ids <versionId> \
   --statuses PENDING \
-  --sort -createdAt \
+  --sort createdAt,desc \
   --limit 20 \
   -o json | jq '.[] | {id, metricId, status}'
 
@@ -49,10 +55,10 @@ galtea evaluations list --version-ids <versionId> -o json \
 For body fields on the create call (`versionId`, optional `specificationIds`), the CLI uses Restish's inline shorthand: `key: value` pairs, comma-separated, with arrays in `[a, b, c]` form. To pass multiple specifications:
 
 ```bash
-galtea evaluations create-from-version versionId: <versionId>, specificationIds: [<spec1>, <spec2>]
+galtea evaluations create-from-version versionId: <versionId>, specificationIds: [<spec1>, <spec2>] </dev/null
 ```
 
-If you prefer JSON-on-stdin (cleaner for complex bodies):
+If you prefer JSON-on-stdin (cleaner for complex bodies, and naturally avoids the stdin-hang gotcha):
 
 ```bash
 echo '{"versionId":"<versionId>","specificationIds":["<spec1>","<spec2>"]}' \
@@ -74,7 +80,7 @@ Terminal states for the poll:
 
 - **Tests must be `status: SUCCESS`** before `create-from-version` will create evaluations against them. `PENDING` / `AUGMENTING` tests are skipped silently. Check `galtea tests list --product-ids <productId>` first if step 4 returns fewer evaluations than expected.
 - **Credits are consumed** by the newly-created evaluations. Pre-flight by resolving the org id (`galtea auth get-current-user -f body.organizationId`), then `galtea organizations get-credit-status <organizationId>` (run `--help` for the exact arg shape) to inspect `totalCredits` / `usedCredits` / `remainingCredits`. If an org runs out mid-run, evaluations fail with a `message` in the body -- no dedicated HTTP status code, so inspect the message rather than matching on a code.
-- **Duplicate names** on related resources (products, versions, tests, metrics) return `400 Bad Request` with a body `message` starting with `"A <Entity> with the same Name..."`. Do not blind-retry on any 400; parse the message first.
+- **Duplicate names** on related resources (products, versions, tests, metrics) return `400 Bad Request` with a body `message` containing the substring `"with the same"` (case-insensitive). Wording varies per entity -- see the duplicate-name gotcha in `SKILL.md` for examples. Do not blind-retry on any 400; parse the message first.
 - **Stale local spec**. If `galtea evaluations create-from-version` errors with "unknown command" or a flag the docs say exists is missing, run `galtea sync` to refresh the OpenAPI command tree.
 
 ## Alternative creation paths
