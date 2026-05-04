@@ -2,14 +2,13 @@
 name: galtea
 description: Help users interact with the Galtea platform -- the AI product testing and evaluation platform for AI/LLM products. Covers authentication, managing products/versions/specifications/tests/metrics/endpoint-connections/evaluations/sessions/inference-results/traces, and wiring an AI product into Galtea for automated testing.
 when_to_use: Invoke when the user mentions Galtea, asks to run or inspect an evaluation, wants to create a product/version/test/metric, needs to debug a failed session or inference, or is trying to connect their AI product to Galtea's testing platform. Trigger phrases include "galtea", "run evaluation", "gsk_...", "testing my AI product", "list my products", "create a test".
-allowed-tools: WebFetch WebSearch Bash(curl *) Bash(jq *) Bash(grep *) Bash(cat *) Bash(ls *) Bash(mkdir *) Bash(chmod *) Bash(test *) Bash(date *) Bash(find *) Bash(rm -f ~/.galtea/api-key) Bash(echo *) Bash(printf *) Bash(tee *) Bash(env *) Bash(awk *) Bash(sed *) Bash(head *) Bash(tail *) Bash(wc *) Bash(sort *) Bash(uniq *) Bash(xmllint *) Bash(gh *)
 ---
 
 # Galtea
 
 Galtea is an AI product testing and evaluation platform. Teams use it to define behavioral specifications, generate test datasets, run evaluations (AI-as-judge, deterministic, or human), and iterate their AI products toward production with confidence.
 
-This skill helps the agent drive the Galtea REST API and advise on the Python SDK on behalf of the user: authenticate, discover the right docs and endpoints, then run or inspect evaluations. Source-of-truth details live in the OpenAPI spec and the docs; this file points at them rather than duplicating them.
+This skill drives the **`galtea` CLI** on behalf of the user: install the binary, authenticate, discover commands and docs, then run or inspect evaluations. The CLI ships one subcommand per OpenAPI operation under a `galtea <noun> <verb>` tree (e.g. `galtea products list`, `galtea evaluations create-from-version`), so the source of truth for arguments is `galtea <noun> <verb> --help`. This file points at it rather than duplicating endpoint shapes.
 
 If the user is new to Galtea, send them through `https://docs.galtea.ai/quickstart`, then `https://docs.galtea.ai/sdk/tutorials/writing-specifications`, then `https://docs.galtea.ai/sdk/tutorials/run-test-based-evaluations` -- the shortest zero-to-evaluation path.
 
@@ -17,9 +16,11 @@ If the user is new to Galtea, send them through `https://docs.galtea.ai/quicksta
 
 | Resource | URL | When to use |
 |---|---|---|
-| Docs index (LLM-optimized) | `https://docs.galtea.ai/llms.txt` | First stop for discovering docs pages. Grep for `/sdk/tutorials/`, `/concepts/`, `/api-reference/`. |
+| Docs index (LLM-optimized) | `https://docs.galtea.ai/llms.txt` | First stop for discovering docs pages. Grep for `/sdk/tutorials/`, `/concepts/`, `/api-reference/`, `/cli/`. |
 | Full docs dump | `https://docs.galtea.ai/llms-full.txt` | When you need all docs content in one fetch (large). |
-| OpenAPI spec | `https://api.galtea.ai/openapi.json` | Source of truth for endpoint paths, request/response schemas, and enums. Use `jq` to slice. |
+| CLI installation | `https://docs.galtea.ai/cli/installation` | apt / dnf / pip paths and verification. |
+| CLI usage | `https://docs.galtea.ai/cli/usage` | Authentication flow + first commands. |
+| OpenAPI spec | `https://api.galtea.ai/openapi.json` | Raw source of endpoint shapes. Prefer `galtea <noun> <verb> --help` -- the CLI reads from this same spec. |
 | Changelog | `https://docs.galtea.ai/changelog` | Check for recent metrics, endpoints, or feature changes. |
 | Quickstart guide | `https://docs.galtea.ai/quickstart` | Onboard new users. |
 | SDK installation | `https://docs.galtea.ai/sdk/installation` | Python SDK setup (`pip install galtea`). |
@@ -36,7 +37,7 @@ See [Concepts Overview](https://docs.galtea.ai/concepts/overview) for the canoni
 
 **Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `fromVersion` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
 
-**Specifications are the glue.** They link metrics (how to score) and drive auto-derivation of tests (what to score against; tests are owned by the product). When the user triggers `fromVersion`, Galtea resolves all specifications for the product, finds their linked metrics and derived tests, and runs evaluations automatically.
+**Specifications are the glue.** They link metrics (how to score) and drive auto-derivation of tests (what to score against; tests are owned by the product). When the user triggers `create-from-version`, Galtea resolves all specifications for the product, finds their linked metrics and derived tests, and runs evaluations automatically.
 
 ### Two evaluation contexts
 
@@ -61,141 +62,153 @@ Custom-vs-built-in is orthogonal: users can create custom metrics in any of the 
 
 ## Core Rules
 
-1. **Authenticate before any API call.** If `$GALTEA_API_KEY` is unset and no key is cached at `~/.galtea/api-key`, run the Authentication flow. Never hit the API without a key resolved.
-2. **Documentation first -- never implement from memory.** Galtea ships frequently; endpoints, metrics, and SDK APIs change. Before you advise on an endpoint, workflow, concept, or metric, fetch the relevant docs page (see Discover docs and endpoints) or the exact slice of the OpenAPI spec (see Discover docs and endpoints). Examples inlined here are illustrative, not authoritative.
-3. **Discover docs via `llms.txt`, then fetch pages as markdown.** The index at `https://docs.galtea.ai/llms.txt` lists every docs page with title, URL, and one-line description. Grep it for the path prefix you need (`/sdk/tutorials/`, `/concepts/`, `/api-reference/`), then fetch the specific page -- every URL works with a `.md` suffix (`Content-Type: text/markdown`) for clean content. Do not guess URLs; do not page through `sitemap.xml` when `llms.txt` is available.
-4. **OpenAPI is the source of truth for endpoint shapes.** Fetch `https://api.galtea.ai/openapi.json` (OpenAPI 3.0, ~180 KB, security scheme `bearerAuth` -- both `gsk_*` and `gsk-*` keys accepted) for exact paths, request bodies, response schemas, enums, and validation constraints. `jq` into the slice you need rather than loading the whole file into context.
-5. **Filter query params are usually plural** (`productIds`, `versionIds`, `testIds`, `metricIds`, `inferenceResultIds`), though a few endpoints accept singular. When in doubt, check `parameters` for the endpoint in `openapi.json` before guessing.
-6. **Evaluations are async.** Trigger via `POST /evaluations/from{Version,Session,InferenceResult}` (returns `202` with no body); list `/evaluations?...&statuses=PENDING` to fetch the created IDs, then poll `GET /evaluations/{id}` until `status` reaches `SUCCESS`, `FAILED`, or `SKIPPED`. `PENDING_HUMAN` means the evaluation is waiting for a human reviewer -- stop polling and surface it to the user.
-7. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
-8. **Discover your own org via `GET /auth/user`.** The authenticated user belongs to exactly one org, exposed as `organizationId` on the returned `User`. `GET /organizations` without filters returns `400 A filter is required`, so either pass `?ids=<id>` when you need the org record or call `GET /organizations/{id}/creditStatus` directly for credits.
+1. **Use the `galtea` CLI for everything that talks to the API.** If `galtea --version` does not return a version, install the binary first (see the CLI Installation section below and [references/cli-install.md](references/cli-install.md)). If `galtea whoami` is not authenticated, run the Authentication flow below before any other call. Never hand-craft `curl -H "Authorization: Bearer ..."` requests when a `galtea` command exists -- the CLI handles auth, retries, output formatting, and follows server-side schema changes via `galtea sync`.
+2. **Documentation first -- never advise from memory.** Galtea ships frequently; commands, metrics, and SDK APIs change. Before you advise on a workflow, concept, or argument shape, fetch the relevant docs page (see "Discover docs and commands" below) and run `galtea <noun> <verb> --help` for the live argument shape. Examples inlined here are illustrative, not authoritative.
+3. **Discover commands via `galtea --help`.** `galtea --help` lists every resource (`products`, `evaluations`, `sessions`, ...); `galtea <noun> --help` lists verbs under a resource; `galtea <noun> <verb> --help` shows the example invocation, request schema, and response schema for one operation. After the API ships new endpoints, run `galtea sync` to refresh the local spec cache.
+4. **Argument syntax depends on the HTTP verb.** GET / list operations expose query params as kebab-case `--flag` arguments (e.g. `galtea evaluations list --version-ids v1,v2 --statuses PENDING`). POST / create / update operations take body fields via Restish's inline shorthand (e.g. `galtea evaluations create-from-version versionId: ver_xxx`) or JSON on stdin (e.g. `echo '{"versionId":"v1"}' | galtea evaluations create-from-version`). The `EXAMPLES` block in `--help` shows the right form for each operation.
+5. **Evaluations are async.** `galtea evaluations create-from-{version,session,inference-result}` and `create-single-turn` return `202` with a `jobId`. List newly-created evaluations with `galtea evaluations list --<scope>-ids <id> --statuses PENDING` to learn IDs, then poll `galtea evaluations get <id>` until `status` reaches `SUCCESS`, `FAILED`, or `SKIPPED`. `PENDING_HUMAN` means the evaluation is waiting for a human reviewer -- stop polling and surface it to the user.
+6. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
+7. **Discover the user's org via `galtea auth get-current-user`.** The authenticated user belongs to exactly one org, exposed as `organizationId` on the returned `User`. For credit status: `galtea organizations get-credit-status` (run `--help` for the exact arg shape).
 
 ## Environment
 
 | Variable | Purpose |
 |---|---|
-| `GALTEA_API_KEY` | `gsk_*` bearer token scoped to the user's Galtea organization. Unset by default -- see Authentication. |
+| `GALTEA_API_KEY` | `gsk_*` bearer token. When set, takes precedence over the cached key in `apis.json`. Useful for CI / scripts / Docker; once `galtea login` has run on a developer machine, this is optional. |
+| `GALTEA_CONFIG_DIR` | Override the per-user config directory where `apis.json` (host + token) lives. Defaults: `~/.config/galtea` (Linux), `~/Library/Application Support/galtea` (macOS), `%AppData%\galtea` (Windows). |
+| `GALTEA_CACHE_DIR` | Override the cache directory for the parsed OpenAPI spec (`raw.cbor`). Defaults to `~/.cache/galtea/`. |
+| `NO_COLOR` | Set to any value to disable ANSI color in CLI output. |
+
+Run `galtea help environment` for the canonical list as the binary sees it.
 
 The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endpoint, and feature by date -- consult it when the user asks about something recent.
 
-**Shell assumption.** The snippets use bash with `jq`, `grep`, `find`, `chmod`, and standard substitutions, and run inside the agent's harness -- they assume nothing about the user's local shell. They run unmodified on macOS, Linux, WSL, and on Windows when the agent's harness uses Git Bash (for example, Claude Code's default on Windows). If your harness only exposes native PowerShell or `cmd`, the Python SDK (`pip install galtea`, install instructions at **https://docs.galtea.ai/sdk/installation**) is the most reliable path -- it is fully cross-platform and exposes the same surface.
+## CLI Installation
 
-**Tool availability.** `bash`, `curl`, `grep`, `find`, and `chmod` ship with Git Bash and most POSIX environments. **`jq` and `python` often do not** -- both are common on developer machines but neither is guaranteed (default Git Bash installs on Windows lack both; macOS ships `python3` but not `jq`). Layer the checks before relying on the snippets:
+If `galtea --version` does not return a version, install the CLI before doing anything else. The full apt / dnf / pip install paths and verification steps live in [references/cli-install.md](references/cli-install.md). Quickest path on any OS with Python 3.9+:
 
-1. Run `jq --version`. If present, use the snippets as-written.
-2. If missing, run `python --version`. If present, use the Python form below -- always pipe the file via shell redirection (`< /tmp/...`) and read from `sys.stdin`. Git Bash on Windows does **not** translate POSIX paths embedded inside `python -c` string arguments (the file lookup runs in native Windows Python, which sees `/tmp/...` literally and fails with `FileNotFoundError`); the redirection avoids that, and reading bytes through `sys.stdin` also sidesteps the CP1252 default-encoding gotcha when the spec contains non-ASCII characters.
+```bash
+pip install galtea-cli
+galtea --version
+```
 
-   ```bash
-   # jq form
-   jq '.paths."/evaluations/fromVersion".post' /tmp/galtea-openapi.json
-
-   # Python form (drop-in replacement; pipe the file in via shell redirection)
-   python -c "import json, sys; s=json.load(sys.stdin); print(json.dumps(s['paths']['/evaluations/fromVersion']['post'], indent=2))" < /tmp/galtea-openapi.json
-   ```
-
-3. If neither is available, **ask the user before installing anything system-wide.** Surface the trade-off: installing Python is broader-purpose and also unlocks the Galtea Python SDK path (`pip install galtea`); installing `jq` is smaller and more focused. The install command depends on their platform (`winget install Python.Python.3` / `winget install jqlang.jq` on Windows, `brew install python` / `brew install jq` on macOS, `apt-get install python3` / `apt-get install jq` on Linux). Wait for their choice; do not silently install on their machine.
-
-The skill keeps writing snippets in `jq` for readability; substitute the Python form when your harness has Python but not `jq`.
+The PyPI wheel bundles the same `galtea` binary used by every other channel. For Debian/Ubuntu (`apt`), Fedora/RHEL/Rocky/Alma (`dnf`/`yum`), and the official APT/YUM repository setup, see [references/cli-install.md](references/cli-install.md). Do not run `sudo` install commands on the user's machine without their explicit approval -- surface the command and let them run it.
 
 ## Authentication
 
-Galtea uses bearer-token auth. Every request includes `-H "Authorization: Bearer $GALTEA_API_KEY"`.
+Galtea uses bearer-token auth. The CLI handles the `Authorization` header, retries, and key persistence -- you do not write `curl -H "Authorization: Bearer ..."` yourself.
 
-**Whenever you are about to make a Galtea API call**, start the bash call with this resolver block -- it sets up the URL helpers and loads the cached key, so the rest of the call can use `$GALTEA_API_URL`, `$GALTEA_DOCS_URL`, and `$GALTEA_API_KEY` freely:
-
-```bash
-GALTEA_API_URL="${GALTEA_API_URL:-https://api.galtea.ai}"
-GALTEA_DOCS_URL="${GALTEA_DOCS_URL:-https://docs.galtea.ai}"
-GALTEA_API_KEY="${GALTEA_API_KEY:-$(cat ~/.galtea/api-key 2>/dev/null)}"
-```
-
-If that leaves `$GALTEA_API_KEY` empty, run the paste-and-validate flow below. Many agents reset shell state between bash invocations, so you must run this resolver at the top of every Galtea bash call -- do not assume a prior `export` persists.
-
-### First-time paste flow
-
-When no key is available:
-
-1. Tell the user: *"Open https://platform.galtea.ai, go to **Settings**, then **API Key** section. Copy your existing key (starts with `gsk_`), or click **Generate API Key** if you do not have one. Each account has a single key -- regenerating permanently replaces it. Paste it here as plain text."*
-2. Receive the pasted value as sensitive free-text. Do **not** use any structured-question tool (e.g. Claude Code's `AskUserQuestion`) for this -- pasting secrets into option metadata leaks them into logs.
-3. Cache the key at `~/.galtea/api-key` with file mode `600` (readable only by your OS user):
-   ```bash
-   mkdir -p ~/.galtea && printf '%s' "$PASTED_KEY" | sed 's/[[:space:]]//g' > ~/.galtea/api-key && chmod 600 ~/.galtea/api-key
-   ```
-4. Validate by hitting `/auth/user` (reads never consume credits) -- run the resolver block (above), then:
-   ```bash
-   curl -s -H "Authorization: Bearer $GALTEA_API_KEY" "$GALTEA_API_URL/auth/user"
-   ```
-5. On a 2xx response, tell the user authentication succeeded. On `401`, tell them the key is invalid and ask again.
-
-### On 401 from a previously cached key
-
-The key was rotated or revoked. Clear the cache and re-run the paste flow:
+### First-time login
 
 ```bash
-rm -f ~/.galtea/api-key
+galtea login
+# Paste your gsk_* API key when prompted.
+# The CLI validates against the server, stores the key at the platform
+# config dir (mode 0600), and refreshes the OpenAPI command tree in the same step.
 ```
 
-## Discover docs and endpoints
+If the user does not have a key, send them to `https://platform.galtea.ai/settings`. Each account has a single key; regenerating permanently replaces it. Keys are shown once -- they should store it somewhere safe before closing the page.
 
-Both `llms.txt` and the OpenAPI spec are large; cache them under `/tmp` with a 24-hour TTL so you do not re-download each turn. Prepend the resolver block from Authentication to every bash call below (auth key is not strictly required for these unauthenticated fetches, but the URL defaults are).
+### Non-interactive (CI, Docker, scripted agents)
 
-**Tool preference for doc fetching.** If your host agent provides `WebFetch` / `WebSearch` (Claude Code, Cursor, etc.), prefer them over `curl` -- they handle summarization, caching, and large-page trimming for free. Use `curl` when you need raw bytes for a `jq` pipeline, when caching to `/tmp`, or when no native fetch tool is available.
+```bash
+export GALTEA_API_KEY=gsk_...
+galtea login          # optional once GALTEA_API_KEY is exported
+```
+
+When `GALTEA_API_KEY` is set, `galtea login` becomes optional -- API calls pick up the env var directly. Run `galtea login` once on a developer machine to also refresh the OpenAPI command tree; in a short-lived CI job that runs only one or two API calls, the env var alone is sufficient.
+
+There is intentionally **no plaintext `--api-key` flag** -- a flag value lands in shell history (`~/.bash_history`, `~/.zsh_history`) and `ps` listings, so credentials passed that way leak. Use the env var or the interactive prompt.
+
+**Receiving a pasted key from the user.** Take the key as sensitive free-text in the chat; do **not** use any structured-question tool (e.g. Claude Code's `AskUserQuestion`) for this -- pasting secrets into option metadata leaks them into logs. Either (a) ask the user to run `galtea login` themselves and paste at the CLI prompt, or (b) accept the key in chat and pass it once via `GALTEA_API_KEY=<key> galtea login` -- never echo it back, never write it to a tracked file.
+
+### Self-hosted / staging
+
+```bash
+galtea login --host https://galtea.your-company.example.com
+```
+
+The host is persisted in `apis.json`; subsequent calls hit that host until you run `galtea login` again with a different `--host`.
+
+### Verify
+
+```bash
+galtea whoami                  # host + key fingerprint + auth status (exits non-zero if not authenticated)
+galtea auth get-current-user   # full User object, including organizationId
+galtea health                  # pings the API; useful as a connectivity probe
+```
+
+### On 401 from a previously valid key
+
+The key was rotated or revoked. Reset:
+
+```bash
+galtea logout
+galtea login          # paste the new key
+```
+
+## Discover docs and commands
 
 ### Docs index (`llms.txt`)
 
+Cache the index under `/tmp` with a 24-hour TTL so you do not re-download each turn:
+
 ```bash
-# Refresh if missing or older than 24h (find -mmin +1440 works on GNU and BSD find)
 if [ ! -f /tmp/galtea-llms.txt ] || \
    [ -n "$(find /tmp/galtea-llms.txt -mmin +1440 2>/dev/null)" ]; then
-  curl -s "$GALTEA_DOCS_URL/llms.txt" > /tmp/galtea-llms.txt
+  curl -s https://docs.galtea.ai/llms.txt > /tmp/galtea-llms.txt
 fi
 
-# Find the entries you need -- the index is a markdown list of
-#   - [Title](URL.md): One-line description
 grep '/sdk/tutorials/'  /tmp/galtea-llms.txt   # tutorials (end-to-end playbooks)
 grep '/concepts/'       /tmp/galtea-llms.txt   # entity definitions + hierarchy
 grep '/api-reference/'  /tmp/galtea-llms.txt   # per-endpoint reference pages
+grep '/cli/'            /tmp/galtea-llms.txt   # CLI installation / usage
 
 # Fetch one specific page as clean markdown (append .md to any page URL)
-curl -s "$GALTEA_DOCS_URL/sdk/tutorials/run-test-based-evaluations.md"
-
-# Fetch everything at once (large but sometimes useful for long-context agents)
-curl -s "$GALTEA_DOCS_URL/llms-full.txt"
+curl -s https://docs.galtea.ai/sdk/tutorials/run-test-based-evaluations.md
 ```
 
-For end-to-end playbooks (creating a product, simulating conversations, tracing an agent, human evaluation, production monitoring) look under `/sdk/tutorials/`. For entity definitions and the hierarchy between them look under `/concepts/`. For per-endpoint reference pages look under `/api-reference/`.
+For end-to-end playbooks (creating a product, simulating conversations, tracing an agent, human evaluation, production monitoring) look under `/sdk/tutorials/`. For entity definitions and the hierarchy between them look under `/concepts/`. For per-endpoint reference pages look under `/api-reference/`. For CLI installation and usage, look under `/cli/`.
 
-### OpenAPI spec
+**Tool preference for doc fetching.** If your host agent provides `WebFetch` / `WebSearch` (Claude Code, Cursor, etc.), prefer them over `curl` -- they handle summarization, caching, and large-page trimming for free. Use `curl` when you need raw bytes for a `grep` pipeline, when caching to `/tmp`, or when no native fetch tool is available.
+
+### CLI commands
 
 ```bash
-# Refresh if missing or older than 24h (find -mmin +1440 works on GNU and BSD find)
-if [ ! -f /tmp/galtea-openapi.json ] || \
-   [ -n "$(find /tmp/galtea-openapi.json -mmin +1440 2>/dev/null)" ]; then
-  curl -s "$GALTEA_API_URL/openapi.json" > /tmp/galtea-openapi.json
-fi
-
-jq '.paths | keys[]'                           /tmp/galtea-openapi.json   # every endpoint path
-jq '.paths."/evaluations/fromVersion".post'    /tmp/galtea-openapi.json   # one operation spec
-jq '.components.schemas.Evaluation'            /tmp/galtea-openapi.json   # reusable schema
-jq '.components.securitySchemes'               /tmp/galtea-openapi.json   # auth schemes
+galtea --help                     # all resources (products, evaluations, sessions, ...)
+galtea <noun> --help              # all verbs under one resource
+galtea <noun> <verb> --help       # description, request schema, response schema, examples
+galtea sync                       # refresh the local OpenAPI command tree after an API release
+galtea raw <operationId>          # escape hatch for the bare Restish form (hidden from --help, still works)
 ```
 
-**OpenAPI 3.0 in one paragraph.** `.paths.<path>.<method>` describes one operation (its `parameters`, `requestBody`, `responses`). Request/response shapes use `$ref` pointers into `.components.schemas.<Name>`. Resolve references with `jq` incrementally rather than loading the whole spec into context.
+The CLI re-parents every OpenAPI operation under a `<noun>` parent generated from the spec's `tags`, with the `x-cli-name` extension as the verb. The resource list always reflects the latest `galtea sync`.
+
+### Output formats
+
+```bash
+galtea X Y                  # JSON (default for endpoint responses)
+galtea X Y -o table         # human-readable table where the response is a list
+galtea X Y -o json | jq …   # pipe through jq for ad-hoc filtering
+galtea X Y -f body.id       # restish result filter (single field, no jq needed)
+```
+
+For debugging an HTTP-level issue, add `-v` / `--verbose` to any command -- the CLI prints the underlying request/response.
 
 ## Evaluation creation paths
 
-Choose the right creation path based on what the user wants to evaluate. For a complete end-to-end curl walkthrough of the `fromVersion` path (find product -> find version -> POST -> list PENDING -> poll), read [references/evaluate-version.md](references/evaluate-version.md) -- fetch it whenever the user asks to run a full evaluation pass on a version, kick off evaluations, or needs to see the async lifecycle concretely.
+Choose the right creation command based on what the user wants to evaluate. For a complete end-to-end CLI walkthrough of the `create-from-version` path (find product -> find version -> create -> list PENDING -> poll), read [references/evaluate-version.md](references/evaluate-version.md) -- fetch it whenever the user asks to run a full evaluation pass on a version, kick off evaluations, or needs to see the async lifecycle concretely.
 
-| User goal | Endpoint | Key input | Notes |
+| User goal | Command | Key input | Notes |
 |---|---|---|---|
-| Evaluate all tests for a version at once | `POST /evaluations/fromVersion` | `versionId` | Resolves specs, metrics, and tests automatically |
-| Evaluate a specific conversation | `POST /evaluations/fromSession` | `sessionId` | Optional: `metrics`, `specificationIds` to narrow scope |
-| Evaluate a single turn (production monitoring) | `POST /evaluations/fromInferenceResult` | `inferenceResultId` | Optional: `metrics`, `specificationIds` |
-| Quick one-off evaluation without sessions | `POST /evaluations/singleTurn` | Inline input + metric | No session/version setup needed |
-| Bulk evaluate many items | `POST /evaluations/batch` | Array of evaluation items | Check OpenAPI for the batch body schema |
-| Re-run failed evaluations | `POST /evaluations/retry` | `evaluationIds` | Only retries evaluations with `FAILED` status |
+| Evaluate all tests for a version at once | `galtea evaluations create-from-version` | `versionId: <id>` | Resolves specs, metrics, and tests automatically |
+| Evaluate a specific conversation | `galtea evaluations create-from-session` | `sessionId: <id>` | Optional `metrics`, `specificationIds` body fields to narrow scope |
+| Evaluate a single turn (production monitoring) | `galtea evaluations create-from-inference-result` | `inferenceResultId: <id>` | Optional `metrics`, `specificationIds` |
+| Quick one-off evaluation without sessions | `galtea evaluations create-single-turn` | inline input + metric body fields | No session/version setup |
+| Re-run failed evaluations | `galtea evaluations retry --evaluation-ids e1,e2,e3` | failed evaluation IDs | Only retries `FAILED` evaluations |
+| Replay onto a new metric revision | `galtea evaluations replay-from-metrics` | metric IDs + scope (body) | See `--help` for the body schema |
 
-All creation endpoints return `202` with no body. After calling, list evaluations filtered by the matching scope (`versionIds`, `sessionIds`, `inferenceResultIds`) with `statuses=PENDING` to learn the newly-created IDs, then poll each until `status` reaches `SUCCESS`, `FAILED`, `SKIPPED`, or `PENDING_HUMAN` (terminal for polling -- waits for a human reviewer).
+All `create-from-*` and `create-single-turn` commands return `202` with a `jobId`. After calling, list freshly-created evaluations filtered by the matching scope (`--version-ids`, `--session-ids`, `--inference-result-ids`) with `--statuses PENDING` to learn the new IDs, then poll each with `galtea evaluations get <id>` until `status` reaches `SUCCESS`, `FAILED`, `SKIPPED`, or `PENDING_HUMAN` (terminal for polling -- waits for a human reviewer).
 
 ## Common Workflows
 
@@ -218,19 +231,20 @@ For other workflows (custom test datasets, judge prompts, agentic evaluation, cu
 
 To fetch any page: `curl -s "https://docs.galtea.ai<path>.md"` or use `WebFetch`.
 
-## REST API vs Python SDK
+## CLI vs Python SDK
 
-This skill can execute REST API calls via `curl` directly, or advise on the Python SDK (`pip install galtea`) -- they target the same backend, so mixing them in one project is safe. For the decision framework (when to pick each) plus routing hints for the main SDK capabilities (agent function, simulator, tracing, inference generation), read [references/rest-vs-sdk.md](references/rest-vs-sdk.md). Fetch it whenever the user asks which approach to use, mentions the SDK, or needs guidance on conversation simulation, agent tracing, or production-monitoring workflows -- those lean SDK.
+This skill drives the `galtea` CLI by default -- it covers everything the REST API does. For workflows that involve actually *running* the user's AI product (the agent-function loop, conversation simulation, tracing internal LLM/tool calls, inline production logging), the [Python SDK](https://docs.galtea.ai/sdk/installation) (`pip install galtea`) is usually the better fit. For the decision framework and SDK routing hints, see [references/cli-vs-sdk.md](references/cli-vs-sdk.md). Mixing the CLI and SDK in one project is safe -- they target the same backend.
 
 ## Gotchas
 
-Runtime behaviors that are not documented in the OpenAPI spec -- these are the only items a well-informed agent still needs explicit reminders for.
+Runtime behaviors that are not in `--help` text -- these are the only items a well-informed agent still needs explicit reminders for.
 
-- **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will fail. Workflow constraint, not a schema rule.
+- **Tests must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will be skipped silently. Workflow constraint, not a schema rule.
 - **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, tests, metrics, endpoint connections, user groups, models, evaluations). The body `message` follows `"A <Entity> with the same Name [and Type]? already exists..."` -- match on that substring to distinguish it from other 400s; do not blind-retry.
 - **Trace rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading.
-- **Credits are consumed** by evaluations and test generation only -- reads and auth are free. For a pre-flight check, call `GET /auth/user` to resolve `organizationId`, then `GET /organizations/{id}/creditStatus` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
-- **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `#/components/schemas/Error` (`{error: string, message: string}`). `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
+- **Credits are consumed** by evaluations and test generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
+- **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `{error: string, message: string}`. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
+- **`galtea sync` is needed after API releases.** If `galtea <noun> <verb>` returns "unknown command" but the docs say it exists, the local spec cache is stale -- run `galtea sync` and retry.
 
 ## Skill Feedback
 
@@ -248,5 +262,5 @@ When triggered, follow the process in [references/skill-feedback.md](references/
 ## When not to use this skill
 
 - **Building the AI product itself.** This skill is for *evaluating* products, not authoring them.
-- **Pure UI browsing.** If the user just wants to look at results visually, point them at `https://platform.galtea.ai` instead of replaying the curl chain.
+- **Pure UI browsing.** If the user just wants to look at results visually, point them at `https://platform.galtea.ai` instead of replaying the CLI chain.
 - **Hand-writing test content.** Galtea generates test cases from specifications (see `/sdk/tutorials/writing-specifications`). Let the platform do that work.
