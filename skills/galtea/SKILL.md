@@ -31,11 +31,18 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ## How Galtea Works
 
-### Entity hierarchy
+### Platform entities
 
-Read [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) at the start of any non-trivial Galtea task. It is the canonical map of how every entity fits together and indexes the per-concept docs pages you'll need next.
+The entities the agent will work with most, grouped by lifecycle scope:
 
-**Specifications are the glue, and `create-from-version` cascades through them.** A `Specification` links `Metric`s (how to score) and drives auto-derivation of `Test`s (what to score against; the `Test` is owned by the `Product`). `create-from-version` resolves all specifications for the version's product, finds their linked metrics and derived tests, and creates evaluations at the leaf level -- turn or conversation, depending on metric and test type. See "Evaluation creation paths" below for the full routing table.
+- **The product under test:** `Product` -> `Version` -> `EndpointConnection` (how Galtea reaches the running product). `Specification`s define what the product should do; each links `Metric`s and auto-derives `Test`s.
+- **What you test with:** `Test` groups `TestCase`s. A `Metric` defines how to score -- see "Metric types" below.
+- **What the product produces at runtime:** `Session` -> `InferenceResult` (one turn) -> `Trace` (internal tool / LLM calls captured per turn).
+- **How performance is measured:** an `Evaluation` applies a `Metric` to a whole `Session` (conversation-level) or to one `InferenceResult` (turn-level). `create-from-version` is the high-level entry point that resolves all of the above for a `Version` in one call -- see "Evaluation creation paths" below.
+
+Supporting entities: `Model` (LLM the product runs on, linked to a `Version`) is distinct from the evaluator model named on AI-as-judge `Metric`s. `UserGroup` routes `HUMAN_EVALUATION` metrics to specific reviewers.
+
+Read [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) for the canonical diagram, schema-validated relationships, and per-concept docs pages.
 
 ### Two evaluation contexts
 
