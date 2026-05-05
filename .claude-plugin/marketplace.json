@@ -1,0 +1,22 @@
+{
+  "name": "galtea",
+  "owner": {
+    "name": "Galtea AI",
+    "email": "support@galtea.ai"
+  },
+  "metadata": {
+    "description": "Skills for working with the Galtea Platform — query and manage products, versions, endpoint connections, evaluations, and more.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "galtea",
+      "description": "Skills for working with the Galtea Platform — query and manage products, versions, endpoint connections, evaluations, and more.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/galtea"
+      ]
+    }
+  ]
+}
