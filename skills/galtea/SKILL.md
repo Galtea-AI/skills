@@ -33,11 +33,9 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ### Entity hierarchy
 
-See [Concepts Overview](https://docs.galtea.ai/concepts/overview) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test` (which owns `TestCase`), and `EndpointConnection`. `Specification`s link to `Metric`s (many-to-many) and to `Test`s (one-to-many; the `Test` is owned by the `Product`, the spec drives auto-derivation). `Metric` and `Model` are organization-scoped (some are global system entities with no org). A `Version` may optionally reference one `Model` (the LLM the product runs on); separately, `Metric`s reference an `EvaluatorModel` (the LLM-as-judge). `UserGroup`s (org-level) route human-evaluation `Metric`s to reviewers. Runtime chain: `Version -> Session -> InferenceResult -> Trace`, with `TestCase` optionally linked to `Session`. An `Evaluation` attaches at the turn level (via `create-from-inference-result`) or the conversation level (via `create-from-session`).
+Fetch [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) for the canonical entity diagram, lifecycle grouping, and arrow legend before answering questions about how entities relate -- especially `Model` (the LLM the product runs on) vs `EvaluatorModel` (the LLM-as-judge), `TestCase` ↔ `Session` direction, and where `Evaluation`s attach (turn-level on `InferenceResult` vs conversation-level on `Session`).
 
-**Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `create-from-version` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
-
-**Specifications are the glue.** They link metrics (how to score) and drive auto-derivation of tests (what to score against; tests are owned by the product). When the user triggers `create-from-version`, Galtea resolves all specifications for the product, finds their linked metrics and derived tests, and runs evaluations automatically.
+**Specifications are the glue, and `create-from-version` cascades through them.** A `Specification` links `Metric`s (how to score) and drives auto-derivation of `Test`s (what to score against; the `Test` is owned by the `Product`). `create-from-version` resolves all specifications for the version's product, finds their linked metrics and derived tests, and creates evaluations at the leaf level -- turn or conversation, depending on metric and test type. See "Evaluation creation paths" below for the full routing table.
 
 ### Two evaluation contexts
 
