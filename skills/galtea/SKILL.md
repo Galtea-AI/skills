@@ -33,7 +33,7 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ### Entity hierarchy
 
-Fetch [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) for the canonical entity diagram, lifecycle grouping, and arrow legend before answering questions about how entities relate -- especially `Model` (the LLM the product runs on) vs `EvaluatorModel` (the LLM-as-judge), `TestCase` ↔ `Session` direction, and where `Evaluation`s attach (turn-level on `InferenceResult` vs conversation-level on `Session`).
+Read [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) at the start of any non-trivial Galtea task. It is the canonical map of how every entity fits together and indexes the per-concept docs pages you'll need next.
 
 **Specifications are the glue, and `create-from-version` cascades through them.** A `Specification` links `Metric`s (how to score) and drives auto-derivation of `Test`s (what to score against; the `Test` is owned by the `Product`). `create-from-version` resolves all specifications for the version's product, finds their linked metrics and derived tests, and creates evaluations at the leaf level -- turn or conversation, depending on metric and test type. See "Evaluation creation paths" below for the full routing table.
 
