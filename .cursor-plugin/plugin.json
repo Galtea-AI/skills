@@ -2,7 +2,7 @@
   "name": "galtea",
   "displayName": "Galtea",
   "version": "1.0.0",
-  "description": "Skills for working with the Galtea Platform — query and manage products, versions, endpoint connections, evaluations, and more.",
+  "description": "Skills for working with Galtea — validate AI products before they reach production and monitor them after.",
   "author": {
     "name": "Galtea AI",
     "email": "support@galtea.ai"

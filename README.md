@@ -10,6 +10,20 @@
 
 ## Installation
 
+### Claude Code Plugin
+
+Add the Galtea marketplace to Claude Code:
+
+```
+/plugin marketplace add Galtea-AI/skills
+```
+
+Then install the Galtea plugin:
+
+```
+/plugin install galtea@galtea
+```
+
 ### Cursor Plugin
 
 A Galtea [Cursor Plugin](https://cursor.com/docs/plugins) that bundles this skill is on the way. Once it is live on the [Cursor marketplace](https://cursor.com/marketplace), install with:

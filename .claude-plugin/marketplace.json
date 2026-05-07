@@ -1,0 +1,22 @@
+{
+  "name": "galtea",
+  "owner": {
+    "name": "Galtea AI",
+    "email": "support@galtea.ai"
+  },
+  "metadata": {
+    "description": "Skills for working with Galtea — validate AI products before they reach production and monitor them after.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "galtea",
+      "description": "Skills for working with Galtea — validate AI products before they reach production and monitor them after.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/galtea"
+      ]
+    }
+  ]
+}
