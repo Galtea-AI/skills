@@ -31,13 +31,18 @@ Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quicks
 
 ## How Galtea Works
 
-### Entity hierarchy
+### Platform entities
 
-See [Concepts Overview](https://docs.galtea.ai/concepts/overview) for the canonical entity diagram. Short version: `Product` owns `Version`, `Specification`, `Test` (which owns `TestCase`), and `EndpointConnection`. `Specification`s link to `Metric`s (many-to-many) and to `Test`s (one-to-many; the `Test` is owned by the `Product`, the spec drives auto-derivation). `Metric` and `Model` are organization-scoped (some are global system entities with no org). A `Version` may optionally reference one `Model` (the LLM the product runs on); separately, `Metric`s reference an `EvaluatorModel` (the LLM-as-judge). `UserGroup`s (org-level) route human-evaluation `Metric`s to reviewers. Runtime chain: `Version -> Session -> InferenceResult -> Trace`, with `TestCase` optionally linked to `Session`. An `Evaluation` attaches at the turn level (via `create-from-inference-result`) or the conversation level (via `create-from-session`).
+The entities the agent will work with most, grouped by lifecycle scope:
 
-**Evaluations attach at the turn level (InferenceResult) or the conversation level (Session).** `create-from-version` orchestrates both by cascading across the version's tests and creating evaluations at the leaf level. See "Evaluation creation paths" below for the full routing table.
+- **The product under test:** `Product` -> `Version` -> `EndpointConnection` (how Galtea reaches the running product). `Specification`s define what the product should do; each links `Metric`s and auto-derives `Test`s.
+- **What you test with:** `Test` groups `TestCase`s. A `Metric` defines how to score -- see "Metric types" below.
+- **What the product produces at runtime:** `Session` -> `InferenceResult` (one turn) -> `Trace` (internal tool / LLM calls captured per turn).
+- **How performance is measured:** an `Evaluation` applies a `Metric` to a whole `Session` (conversation-level) or to one `InferenceResult` (turn-level). `create-from-version` is the high-level entry point that resolves all of the above for a `Version` in one call -- see "Evaluation creation paths" below.
 
-**Specifications are the glue.** They link metrics (how to score) and drive auto-derivation of tests (what to score against; tests are owned by the product). When the user triggers `create-from-version`, Galtea resolves all specifications for the product, finds their linked metrics and derived tests, and runs evaluations automatically.
+Supporting entities: `Model` (LLM the product runs on, linked to a `Version`) is distinct from the evaluator model named on AI-as-judge `Metric`s. `UserGroup` routes `HUMAN_EVALUATION` metrics to specific reviewers.
+
+Read [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) for the canonical diagram, schema-validated relationships, and per-concept docs pages.
 
 ### Two evaluation contexts
 
