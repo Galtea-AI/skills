@@ -1,15 +1,25 @@
 ---
 name: galtea-cli-install
-description: Install paths and verification for the `galtea` CLI on Debian/Ubuntu (apt), Fedora/RHEL/Rocky/Alma (dnf/yum), and any OS with Python 3.9+ (pip). Use when `galtea --version` fails on the user's machine, or before `galtea login` for a first-time setup.
+description: Install paths and verification for the `galtea` CLI on macOS/Linux (Homebrew), Debian/Ubuntu (apt), Fedora/RHEL/Rocky/Alma (dnf/yum), and any OS with Python 3.9+ (pip). Use when `galtea --version` fails on the user's machine, or before `galtea login` for a first-time setup.
 ---
 
 # Galtea CLI -- Installation
 
-The `galtea` CLI ships as a single binary, repackaged for the channels users already have. Pick the section that matches the user's OS. Verify with `galtea --version` before continuing to authentication.
+The `galtea` CLI ships as a single binary, repackaged for the channels users already have. Pick the section that matches the user's OS and preferred package manager. Verify with `galtea --version` before continuing to authentication.
 
 The canonical installation page is `https://docs.galtea.ai/cli/installation` -- fetch it (`curl -s https://docs.galtea.ai/cli/installation.md`) when in doubt; that page is updated whenever a new channel ships.
 
 > **Do not run `sudo` install commands on the user's machine without their explicit approval.** Surface the command and the rationale; let the user run it. The `pip` path below avoids `sudo` and is the safest default in agent-driven contexts.
+
+## Homebrew (macOS / Linux)
+
+If the user has [Homebrew](https://brew.sh/) on macOS or [Linuxbrew](https://docs.brew.sh/Homebrew-on-Linux), the tap auto-installs on first use:
+
+```bash
+brew install galtea-ai/tap/galtea
+```
+
+Apple Silicon, Intel macOS, and Linux on `x86_64` / `arm64` are all supported.
 
 ## Python (any OS, no sudo)
 
@@ -73,6 +83,7 @@ galtea --version
 A version string (e.g. `galtea version 4.x.y`) confirms the binary is on `PATH`. If the command is not found after a successful install, the install dir is missing from `PATH`:
 
 - `pip` / `pipx` install: ensure the user-bin dir (`python3 -m site --user-base`/`bin`, or `~/.local/bin`) is on `PATH`.
+- Homebrew install: ensure Homebrew's `bin` directory is on `PATH` (`/opt/homebrew/bin` on Apple Silicon macOS, `/usr/local/bin` on Intel macOS, or the user's Linuxbrew prefix on Linux).
 - apt / dnf install: the binary lands at `/usr/bin/galtea` -- a missing `/usr/bin` from `PATH` is unusual, suspect a custom shell rc.
 
 ## Troubleshooting
