@@ -29,9 +29,10 @@ galtea versions list --product-ids <productId> -o json | jq '.[] | {id, name}'
 galtea evaluations create-from-version versionId: <versionId> </dev/null
 
 # 4. List the freshly-created evaluations to grab their IDs (the create call only returned a job id).
-#    --sort takes alternating `field,direction` pairs. Don't use a leading `-` for descending
-#    (e.g. `--sort -createdAt`) -- the CLI parses `-createdAt` as a short-flag combination
-#    and `-t` (the --rsh-timeout shorthand) consumes `edAt` as a duration value, then panics.
+#    --sort takes `field,direction` pairs. Don't use a leading `-` for descending
+#    (e.g. `--sort -createdAt`) -- the CLI parses `-createdAt` as a short-flag combination,
+#    and `-t` (`--timeout`) can consume `edAt` as a duration value, causing the command
+#    to fail before the request is sent.
 galtea evaluations list \
   --version-ids <versionId> \
   --statuses PENDING \
