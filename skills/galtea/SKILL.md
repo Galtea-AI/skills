@@ -17,7 +17,7 @@ If the user is new to Galtea, send them through `https://docs.galtea.ai/quicksta
 |---|---|---|
 | Docs index (LLM-optimized) | `https://docs.galtea.ai/llms.txt` | First stop for discovering docs pages. Grep for `/sdk/tutorials/`, `/concepts/`, `/api-reference/`, `/cli/`. |
 | Full docs dump | `https://docs.galtea.ai/llms-full.txt` | When you need all docs content in one fetch (large). |
-| CLI installation | `https://docs.galtea.ai/cli/installation` | apt / dnf / pip paths and verification. |
+| CLI installation | `https://docs.galtea.ai/cli/installation` | Homebrew / apt / dnf / pip paths and verification. |
 | CLI usage | `https://docs.galtea.ai/cli/usage` | Authentication flow + first commands. |
 | OpenAPI spec | `https://api.galtea.ai/openapi.json` | Raw source of endpoint shapes. Prefer `galtea <noun> <verb> --help` -- the CLI reads from this same spec. |
 | Changelog | `https://docs.galtea.ai/changelog` | Check for recent metrics, endpoints, or feature changes. |
@@ -89,14 +89,14 @@ The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endp
 
 ## CLI Installation
 
-If `galtea --version` does not return a version, install the CLI before doing anything else. The full apt / dnf / pip install paths and verification steps live in [references/cli-install.md](references/cli-install.md). Quickest path on any OS with Python 3.9+:
+If `galtea --version` does not return a version, install the CLI before doing anything else. The full Homebrew / apt / dnf / pip install paths and verification steps live in [references/cli-install.md](references/cli-install.md). Quickest path on any OS with Python 3.9+:
 
 ```bash
 pip install galtea-cli
 galtea --version
 ```
 
-The PyPI wheel bundles the same `galtea` binary used by every other channel. For Debian/Ubuntu (`apt`), Fedora/RHEL/Rocky/Alma (`dnf`/`yum`), and the official APT/YUM repository setup, see [references/cli-install.md](references/cli-install.md). Do not run `sudo` install commands on the user's machine without their explicit approval -- surface the command and let them run it.
+The PyPI wheel bundles the same `galtea` binary used by every other channel. For Homebrew, Debian/Ubuntu (`apt`), Fedora/RHEL/Rocky/Alma (`dnf`/`yum`), and the official repository setup, see [references/cli-install.md](references/cli-install.md). Do not run `sudo` install commands on the user's machine without their explicit approval -- surface the command and let them run it.
 
 ## Authentication
 
