@@ -1,7 +1,7 @@
 ---
 name: galtea
-description: Help users interact with the Galtea platform -- the AI product testing and evaluation platform for AI/LLM products. Covers authentication, managing products, versions, specifications, tests, metrics, endpoint-connections, evaluations, sessions, inference-results, and traces, and wiring an AI product into Galtea for automated testing.
-when_to_use: Invoke when the user mentions Galtea, asks to run or inspect an evaluation, wants to create a product/version/test/metric, needs to debug a failed session or inference, or is trying to connect their AI product to Galtea's testing platform. Trigger phrases include "galtea", "run evaluation", "gsk_...", "testing my AI product", "list my products", "create a test".
+description: Interact with the Galtea platform and access its documentation -- Galtea is the AI product testing and evaluation platform for AI/LLM products. Use when needing to (1) query or modify Galtea data via the `galtea` CLI -- products, versions, specifications, tests, metrics, endpoint-connections, evaluations, sessions, inference-results, traces, and any other API resource, (2) run or monitor evaluations of an AI product (pre-deployment test-based or production monitoring), (3) wire an AI product into Galtea via the Python SDK for automated testing, or (4) look up Galtea documentation, concepts, CLI usage, or SDK integration guides. This skill covers CLI-based API access (via the `galtea` binary) and Python SDK pipelines for runtime evaluation.
+when_to_use: Trigger on user mentions of Galtea, `gsk_*` API keys, or phrases like "run evaluation", "testing my AI product", "list my products", "create a test", "evaluate a session", or "trace agent operations".
 ---
 
 # Galtea
