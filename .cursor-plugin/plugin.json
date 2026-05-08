@@ -2,7 +2,7 @@
   "name": "galtea",
   "displayName": "Galtea",
   "version": "1.0.0",
-  "description": "Skills for working with Galtea — validate AI products before they reach production and monitor them after.",
+  "description": "Use Galtea directly in Cursor through a preconfigured Galtea skill. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces through natural conversation.",
   "author": {
     "name": "Galtea AI",
     "email": "support@galtea.ai"
@@ -10,13 +10,7 @@
   "homepage": "https://galtea.ai",
   "repository": "https://github.com/Galtea-AI/skills",
   "license": "MIT",
-  "keywords": [
-    "galtea",
-    "llm",
-    "evaluation",
-    "testing",
-    "ai-quality"
-  ],
+  "keywords": ["galtea", "llm", "evaluation", "testing", "ai-quality"],
   "category": "developer-tools",
   "logo": "assets/logo.png",
   "skills": "./skills/"

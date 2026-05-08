@@ -6,7 +6,7 @@
 
 | Skill | Description |
 |---|---|
-| [galtea](./skills/galtea) | Interact with the Galtea Platform API. Authenticate, manage products/versions/specifications/tests/metrics/endpoint-connections, run and monitor evaluations, and inspect sessions and traces. |
+| [galtea](./skills/galtea) | Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces. |
 
 ## Installation
 
