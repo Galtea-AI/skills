@@ -29,8 +29,8 @@ If Python is not an option and the user still needs one of the SDK-leaning workf
 
 Identifiers below are routing hints, not canonical names. Fetch the relevant `/sdk/api/*` page in `llms.txt` (see `SKILL.md`'s "Discover docs and commands" section) before advising on the exact method signature -- the SDK evolves frequently.
 
-- **Agent function** -- the user's AI product, wrapped by the SDK and called by `galtea.evaluations.run(version_id, agent=...)` and the simulator. The SDK auto-detects the agent's input shape **from the first parameter's type annotation**, so annotate it deliberately:
-  - **Recommended:** `def my_agent(messages: list[dict]) -> str` (receives the full chat history), or the `galtea.Agent` / `galtea.AgentInput` adapter for structured input plus session/inference context.
+- **Agent function** -- the user's AI product, wrapped by the SDK and called by `galtea.evaluations.run(version_id, agent=...)` and the simulator. The SDK auto-detects the agent's input shape **from the first parameter's type annotation**, so annotate it deliberately. The mapping below reflects current SDK behavior; `/sdk/api/*` remains the source of truth if it ever changes:
+  - **Recommended:** Use `def my_agent(messages: list[dict]) -> str` (receives the full chat history), or the `galtea.Agent` / `galtea.AgentInput` adapter for structured input plus session/inference context.
   - **Annotation → argument-shape mapping:**
     - `str` → the latest user message as a plain string.
     - `galtea.AgentInput` → a structured object (messages, session_id, inference_result_id, context_data).
