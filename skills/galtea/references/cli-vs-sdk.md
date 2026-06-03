@@ -29,7 +29,13 @@ If Python is not an option and the user still needs one of the SDK-leaning workf
 
 Identifiers below are routing hints, not canonical names. Fetch the relevant `/sdk/api/*` page in `llms.txt` (see `SKILL.md`'s "Discover docs and commands" section) before advising on the exact method signature -- the SDK evolves frequently.
 
-- **Agent function** -- the user's AI product, wrapped by the SDK. Multiple signatures are auto-detected; check the installation docs or `/sdk/api/*` for the current list.
+- **Agent function** -- the user's AI product, wrapped by the SDK and called by `galtea.evaluations.run(version_id, agent=...)` and the simulator. The SDK auto-detects the agent's input shape **from the first parameter's type annotation**, so annotate it deliberately:
+  - **Recommended:** `def my_agent(messages: list[dict]) -> str` (receives the full chat history), or the `galtea.Agent` / `galtea.AgentInput` adapter for structured input plus session/inference context.
+  - **Annotation → argument-shape mapping:**
+    - `str` → the latest user message as a plain string.
+    - `galtea.AgentInput` → a structured object (messages, session_id, inference_result_id, context_data).
+    - **anything else, including no annotation** → a `list[dict]` chat history (`[{"role": ..., "content": ...}, ...]`).
+  - **Footgun:** an *unannotated* first parameter (`def agent(user_message):`) silently receives the `list[dict]` default, so an agent that assumes a bare string crashes (e.g. `'list' object has no attribute 'strip'`) and its evaluation ends up `SKIPPED`/unscored. Always annotate the first parameter with the shape you actually handle.
 - **Simulator** -- plays the user role across multi-turn conversations, calling the agent each turn.
 - **Tracing** -- captures internal agent operations (tool calls, LLM calls) as Trace records; both decorator and context-manager forms are available.
 - **Inference generation** -- single-call utility that runs the agent and logs the inference result in one step.
