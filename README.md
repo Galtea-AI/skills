@@ -7,6 +7,7 @@
 | Skill | Description |
 |---|---|
 | [galtea](./skills/galtea) | Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces. |
+| [galtea-loop](./skills/galtea-loop) | Run the full Galtea improvement loop for an AI product: define specs, generate test cases, evaluate the product against them, then iterate the product and specs based on what failed. Vendor-neutral; drives Galtea via the CLI or the Python SDK. |
 
 ## Installation
 
