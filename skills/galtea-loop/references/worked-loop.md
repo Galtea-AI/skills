@@ -29,22 +29,27 @@ specs = [
 ]
 
 # ── Stage 2: generate test cases (async job per test) ───────────────────
+# Pick the test type from the spec's intent (verify enums via docs/--help).
+TEST_TYPE = {"CAPABILITY": "ACCURACY", "INABILITY": "SECURITY", "POLICY": "BEHAVIOR"}
 tests = []
 for spec in specs:
     t = client.tests.create(product_id=product.id, specification_id=spec.id,
-                            type="ACCURACY", name=f"tests for {spec.id}")
+                            type=TEST_TYPE.get(spec.type, "ACCURACY"),
+                            name=f"tests for {spec.id}")
     tests.append(t)
 
-for t in tests:                       # poll each generation job to completion
+for t in tests:                       # poll each generation job to a terminal state
     while True:
         status = client.jobs.get_status(t.job_id)   # verify field/method via docs
-        if status in ("SUCCESS", "FAILED"):
+        if status == "FAILED":
+            raise RuntimeError(f"test generation failed for test {t.id}")
+        if status == "SUCCESS":
             break
         time.sleep(5)
 
 # ── Stage 3: run the product and evaluate ───────────────────────────────
 def my_agent(messages: list[dict]) -> str:      # annotate the first param deliberately
-    return my_product.respond(messages)          # the user's AI product
+    return "Mock response"                       # replace with a call to your AI product
 
 version = client.versions.create(product_id=product.id, name="v1")
 for t in tests:
@@ -71,25 +76,40 @@ galtea specifications create productId: "$PID", type: INABILITY, \
   description: "Never provides legal or medical advice" </dev/null
 
 # ── Stage 2: generate test cases (one async job per test) ──────────────
-# Link each test to its spec; poll the returned job until terminal.
-for SID in $(galtea specifications list --product-ids "$PID" -o json | jq -r '.[].id'); do
+# Link each test to its spec, picking the test type from the spec's intent
+# (verify enums via docs/--help). Poll each returned job to a terminal state.
+for ROW in $(galtea specifications list --product-ids "$PID" -o json | jq -r '.[] | "\(.id):\(.type)"'); do
+  SID="${ROW%%:*}"; STYPE="${ROW##*:}"
+  case "$STYPE" in
+    INABILITY) TTYPE=SECURITY ;;
+    POLICY)    TTYPE=BEHAVIOR ;;
+    *)         TTYPE=ACCURACY ;;   # CAPABILITY and anything else
+  esac
   JOB=$(galtea tests create productId: "$PID", specificationId: "$SID", \
-        type: ACCURACY, name: "tests for $SID" -o json </dev/null | jq -r .jobId)
-  while [ "$(galtea jobs get-status "$JOB" -o json | jq -r .status)" = "PENDING" ]; do
+        type: "$TTYPE", name: "tests for $SID" -o json </dev/null | jq -r .jobId)
+  while true; do
+    STATUS=$(galtea jobs get-status "$JOB" -o json | jq -r .status)
+    [ "$STATUS" = "SUCCESS" ] && break
+    [ "$STATUS" = "FAILED" ] && { echo "test generation failed for spec $SID" >&2; exit 1; }
     sleep 5
   done
 done
 
-# ── Stage 3: evaluate the whole version (needs an EndpointConnection on the version) ──
+# ── Stage 3: evaluate the whole version ─────────────────────────────────
+# Create a version to evaluate. create-from-version reaches the product via
+# the version's EndpointConnection, so wire one first (see the galtea skill);
+# a version without it produces no evaluations.
+VID=$(galtea versions create productId: "$PID", name: "v1" -o json </dev/null | jq -r .id)
+
 # create-from-version cascades specs -> metrics -> tests -> evaluations.
 # See the galtea skill's references/evaluate-version.md for the full async lifecycle.
-galtea evaluations create-from-version versionId: <versionId> </dev/null
-while [ "$(galtea evaluations list --version-ids <versionId> --statuses PENDING -o json | jq 'length')" -gt 0 ]; do
+galtea evaluations create-from-version versionId: "$VID" </dev/null
+while [ "$(galtea evaluations list --version-ids "$VID" --statuses PENDING -o json | jq 'length')" -gt 0 ]; do
   sleep 5
 done
 
 # ── Read outcomes ──────────────────────────────────────────────────────
-galtea evaluations list --version-ids <versionId> -o json \
+galtea evaluations list --version-ids "$VID" -o json \
   | jq '.[] | {id, specificationId, status, score, reason}'
 ```
 

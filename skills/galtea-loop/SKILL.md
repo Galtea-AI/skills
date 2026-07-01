@@ -113,6 +113,7 @@ Goal: run the product against the generated test cases and score each one. This 
 def my_agent(messages: list[dict]) -> str:
     return my_product.respond(messages)   # the user's AI product
 
+version = client.versions.create(product_id=product.id, name="v1")   # comparable across iterations
 for case in client.tests.list_cases(test.id):        # verify method name via docs
     client.inference_results.create_and_evaluate(
         version_id=version.id,
