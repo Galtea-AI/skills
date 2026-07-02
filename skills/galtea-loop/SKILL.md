@@ -54,21 +54,22 @@ Specification types (verify current enum via `--help`/docs):
 
 **Draft specs from the user's codebase, don't invent them.** If the host has an internal spec-drafting skill (e.g. `generate-ai-spec`), compose it to read the product's code/prompts and propose a spec set for the user to approve. Otherwise, read the product's system prompts, tools, and docs yourself and propose the list. Either way, get the user's sign-off on the spec list before creating them -- specs steer everything downstream. Read `https://docs.galtea.ai/sdk/tutorials/writing-specifications.md` for what makes a good spec.
 
-Create the product, then each approved spec:
+Create the product, then each approved spec. **Product creation requires a `description`, and the SDK has no `products.create`** — create the product via the CLI (or platform), then reference it from the SDK with `client.products.get_by_name(...)`.
 
 ```bash
-# CLI (see galtea skill for the </dev/null stdin gotcha)
-galtea products create name: "Support Agent" </dev/null
+# CLI (see galtea skill for the </dev/null stdin gotcha). name AND description required.
+galtea products create name: "Support Agent", \
+  description: "Customer support agent for billing questions" </dev/null
 galtea specifications create productId: <productId>, type: CAPABILITY, \
   description: "Answers billing questions using the customer's plan data" </dev/null
 ```
 
 ```python
-# SDK
-product = client.products.create(name="Support Agent")
+# SDK -- product must already exist (created via CLI/platform); fetch it.
+product = client.products.get_by_name("Support Agent")
 spec = client.specifications.create(
     product_id=product.id,
-    type="CAPABILITY",
+    type="CAPABILITY",       # CAPABILITY / INABILITY need no test_type; POLICY does (see Stage 2)
     description="Answers billing questions using the customer's plan data",
 )
 ```
@@ -77,31 +78,39 @@ Verify with `galtea specifications list --product-ids <productId>` / `client.spe
 
 ## Stage 2 — Generate test cases
 
-Goal: for each specification, a `Test` (with generated `TestCase`s) that probes whether the product upholds that spec. Generation is **asynchronous** -- it returns a job you must poll.
+Goal: for each specification, a `Test` whose generated `TestCase`s probe whether the product upholds that spec. Generation is **asynchronous** — poll until the test is ready.
 
-Test types (verify current enum via `galtea tests create --help`/docs) map onto spec intent — e.g. `ACCURACY` for `CAPABILITY` specs, `SECURITY` for `INABILITY`/red-teaming, `BEHAVIOR` for multi-turn `POLICY` scenarios. Link each test to the specification it exercises.
+**Test type is `QUALITY`, `RED_TEAMING`, or `SCENARIOS`** (verify via `galtea tests create --help`/docs — these are the real `TestType` values; do **not** assume `ACCURACY`/`SECURITY`/`BEHAVIOR`). They differ in what generation needs:
+
+- **`SCENARIOS`** — multi-turn behavior tests generated **directly from the spec**, no extra input. Simplest starting point.
+- **`QUALITY`** / **`RED_TEAMING`** — need extra input: `QUALITY` generation requires an uploaded test file, a ground-truth file, or a source test; a `test_variant` is required when the spec's `test_type` is one of these.
+
+Spec-driven wiring, verified against the API:
+
+- **`POLICY`** specs take a `test_type` at creation (and a `test_variant` for `QUALITY`/`RED_TEAMING`), and are the **only** spec type you can link metrics to (`specifications.link_metrics`).
+- **`CAPABILITY`** / **`INABILITY`** specs are created without a `test_type`; their tests/metrics derive through the spec-driven flow — see `https://docs.galtea.ai/sdk/tutorials/specification-driven-evaluations.md`.
 
 ```bash
-# CLI: create a test linked to a spec, then poll the job to completion.
+# CLI: create a SCENARIOS test linked to a spec, then poll the TEST status.
 galtea tests create productId: <productId>, specificationId: <specId>, \
-  type: ACCURACY, name: "Billing accuracy" </dev/null
-# → returns a job id; poll it (see galtea skill for polling patterns)
-galtea jobs get-status <jobId>
+  type: SCENARIOS, name: "Billing behavior" </dev/null
+# tests.create is async and returns no job id — poll the test's own status.
+galtea tests get <testId> -f body.status   # wait for SUCCESS
 ```
 
 ```python
 # SDK
+import time
 test = client.tests.create(
-    product_id=product.id,
-    specification_id=spec.id,
-    type="ACCURACY",
-    name="Billing accuracy",
+    product_id=product.id, specification_id=spec.id,
+    type="SCENARIOS", name="Billing behavior", max_test_cases=3,
 )
-# generation is async — poll the job until it is done
-status = client.jobs.get_status(test.job_id)
+# tests.create returns NO job id — poll the test's own status to a terminal state.
+while not str(client.tests.get(test.id).status).endswith(("SUCCESS", "FAILED")):
+    time.sleep(5)
 ```
 
-Poll until the job reaches a terminal state, then confirm the resulting test is `status: SUCCESS` before stage 3 — `PENDING`/`AUGMENTING` tests are skipped silently during evaluation. If the host has a test-authoring skill (e.g. `create-quality-tests`, `create-test`), compose it here for richer test content. Test generation consumes credits — see the `galtea` skill's credit-check note.
+Confirm the test reaches `status: SUCCESS` before stage 3 — `PENDING`/`AUGMENTING` tests are skipped silently during evaluation. Inspect the generated cases with `client.test_cases.list(test_id=test.id)`. If the host has a test-authoring skill (e.g. `create-quality-tests`, `create-test`), compose it here for richer test content. Test generation consumes credits — see the `galtea` skill's credit-check note.
 
 ## Stage 3 — Evaluate
 
@@ -114,12 +123,14 @@ def my_agent(messages: list[dict]) -> str:
     return my_product.respond(messages)   # the user's AI product
 
 version = client.versions.create(product_id=product.id, name="v1")   # comparable across iterations
-for case in client.tests.list_cases(test.id):        # verify method name via docs
-    client.inference_results.create_and_evaluate(
-        version_id=version.id,
-        test_case_id=case.id,
-        agent=my_agent,
-    )
+# evaluations.run is the agent-callback entry point: it drives the agent against
+# the spec's tests (via the conversation simulator for SCENARIOS) and scores each.
+# (Not inference_results.create_and_evaluate — that logs one pre-computed output.)
+client.evaluations.run(
+    version_id=version.id,
+    agent=my_agent,
+    specification_ids=[spec.id],
+)
 ```
 
 **CLI (product reached over an HTTP `EndpointConnection`):** create a `Version` with an endpoint connection so Galtea calls the product for you, then evaluate the whole version at once:
