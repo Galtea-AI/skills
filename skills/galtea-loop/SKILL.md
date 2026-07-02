@@ -35,7 +35,7 @@ If the `galtea` skill is not available in the host, fall back to `https://docs.g
 
 Decide once, up front, from the user's environment -- then keep the loop on that surface (mixing is safe, but one surface is simpler to follow):
 
-- **Python SDK (`pip install galtea`)** when the user is in a Python project **and** you will run their AI product from Python. Stage 3 (running the product against the test cases) is the deciding factor: the SDK's `client.inference_results.create_and_evaluate(...)` runs the agent and scores it in one call. Prefer the SDK whenever the product itself is Python-callable.
+- **Python SDK (`pip install galtea`)** when the user is in a Python project **and** you will run their AI product from Python. Stage 3 is the deciding factor: the SDK runs the agent against the test cases and scores it for you (see Stage 3). Prefer the SDK whenever the product itself is Python-callable.
 - **`galtea` CLI** when Python is unavailable/unwanted, when the product is reached over HTTP via an `EndpointConnection` (so Galtea calls it for you and you never run it locally), or when the host agent should drive everything through shell commands. With an endpoint connection, `galtea evaluations create-from-version` cascades specs → metrics → tests → evaluations in one call.
 
 If unsure, ask the user whether their product is callable from Python or reachable over an HTTP endpoint, and pick accordingly. See the `galtea` skill's `references/cli-vs-sdk.md` for the full decision framework.
@@ -116,7 +116,7 @@ Confirm the test reaches `status: SUCCESS` before stage 3 — `PENDING`/`AUGMENT
 
 Goal: run the product against the generated test cases and score each one. This is the stage that decides CLI vs SDK.
 
-**SDK (product is Python-callable):** run the agent and evaluate in one pass. The SDK auto-detects the agent's input shape from its first parameter's annotation — annotate it deliberately (`def my_agent(messages: list[dict]) -> str` is the safe default; an unannotated param silently receives a `list[dict]` and crashes string-assuming agents). See the `galtea` skill's `references/cli-vs-sdk.md`.
+**SDK (product is Python-callable):** run the agent and evaluate in one pass via `evaluations.run`. Annotate the agent's first parameter deliberately — `def my_agent(messages: list[dict]) -> str` is the safe default. The SDK infers the input shape from that annotation, and getting it wrong is a known footgun; the `galtea` skill's `references/cli-vs-sdk.md` has the full annotation→shape mapping.
 
 ```python
 def my_agent(messages: list[dict]) -> str:
