@@ -14,7 +14,7 @@
       "description": "Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces.",
       "source": "./",
       "strict": false,
-      "skills": ["./skills/galtea"]
+      "skills": ["./skills/galtea", "./skills/galtea-loop"]
     }
   ]
 }
