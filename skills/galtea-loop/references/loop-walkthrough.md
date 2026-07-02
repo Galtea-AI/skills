@@ -1,5 +1,5 @@
 ---
-name: galtea-loop-worked-example
+name: galtea-loop-walkthrough
 description: End-to-end worked example of the full Galtea improvement loop (define specs -> generate tests -> evaluate -> iterate), shown once as a Python SDK script and once as an equivalent `galtea` CLI session. Use when the user wants to see the loop run concretely rather than stage by stage.
 ---
 

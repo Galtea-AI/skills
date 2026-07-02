@@ -159,7 +159,7 @@ Repeat until the failing set is empty or the user is satisfied with the pass rat
 
 ## Worked example
 
-For a complete, runnable pass through all four stages — a Python SDK script and the equivalent CLI session — read [references/worked-loop.md](references/worked-loop.md). Fetch it whenever the user wants to see the loop concretely rather than stage by stage.
+For a complete, runnable pass through all four stages — a Python SDK script and the equivalent CLI session — read [references/loop-walkthrough.md](references/loop-walkthrough.md). Fetch it whenever the user wants to see the loop concretely rather than stage by stage.
 
 ## When not to use this skill
 
