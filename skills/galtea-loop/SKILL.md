@@ -80,15 +80,10 @@ Verify with `galtea specifications list --product-ids <productId>` / `client.spe
 
 Goal: for each specification, a `Test` whose generated `TestCase`s probe whether the product upholds that spec. Generation is **asynchronous** — poll until the test is ready.
 
-**Test type is `QUALITY`, `RED_TEAMING`, or `SCENARIOS`** (verify via `galtea tests create --help`/docs — these are the real `TestType` values; do **not** assume `ACCURACY`/`SECURITY`/`BEHAVIOR`). They differ in what generation needs:
+The canonical `TestType` list (`QUALITY` / `RED_TEAMING` / `SCENARIOS`) lives in the `galtea` skill's evaluation-contexts table — do **not** assume `ACCURACY`/`SECURITY`/`BEHAVIOR`. What the loop adds on top is how each type generates and how it wires to a spec — the spine that is easiest to get silently wrong:
 
-- **`SCENARIOS`** — multi-turn behavior tests generated **directly from the spec**, no extra input. Simplest starting point.
-- **`QUALITY`** / **`RED_TEAMING`** — need extra input: `QUALITY` generation requires an uploaded test file, a ground-truth file, or a source test; a `test_variant` is required when the spec's `test_type` is one of these.
-
-Spec-driven wiring, verified against the API:
-
-- **`POLICY`** specs take a `test_type` at creation (and a `test_variant` for `QUALITY`/`RED_TEAMING`), and are the **only** spec type you can link metrics to (`specifications.link_metrics`).
-- **`CAPABILITY`** / **`INABILITY`** specs are created without a `test_type`; their tests/metrics derive through the spec-driven flow — see `https://docs.galtea.ai/sdk/tutorials/specification-driven-evaluations.md`.
+- **`SCENARIOS`** generates test cases **directly from the spec**, no extra input — the simplest starting point. `QUALITY` generation instead needs an uploaded test/ground-truth file or a source test, and `QUALITY`/`RED_TEAMING` require a `test_variant`.
+- **`POLICY`** specs take a `test_type` at creation and are the **only** spec type you can link a metric to (`specifications.link_metrics`) — and a linked metric is what makes an evaluation produce a score. **`CAPABILITY`/`INABILITY`** specs omit `test_type` and derive their tests/metrics through the spec-driven flow (`https://docs.galtea.ai/sdk/tutorials/specification-driven-evaluations.md`).
 
 ```bash
 # CLI: create a SCENARIOS test linked to a spec, then poll the TEST status.
@@ -110,7 +105,7 @@ while not str(client.tests.get(test.id).status).endswith(("SUCCESS", "FAILED")):
     time.sleep(5)
 ```
 
-Confirm the test reaches `status: SUCCESS` before stage 3 — `PENDING`/`AUGMENTING` tests are skipped silently during evaluation. Inspect the generated cases with `client.test_cases.list(test_id=test.id)`. If the host has a test-authoring skill (e.g. `create-quality-tests`, `create-test`), compose it here for richer test content. Test generation consumes credits — see the `galtea` skill's credit-check note.
+Confirm the test reaches `status: SUCCESS` before stage 3 (non-`SUCCESS` tests are skipped silently during evaluation — see the `galtea` skill's Gotchas). Inspect the generated cases with `client.test_cases.list(test_id=test.id)`. If the host has a test-authoring skill (e.g. `create-quality-tests`, `create-test`), compose it here for richer test content. Test generation consumes credits — see the `galtea` skill's credit-check note.
 
 ## Stage 3 — Evaluate
 

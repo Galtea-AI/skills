@@ -7,10 +7,12 @@ description: End-to-end worked example of the full Galtea improvement loop (defi
 
 This walks a single product from zero to a first set of pass/fail outcomes and the iteration decision. It centers on the path verified against the API — a `POLICY` spec with `SCENARIOS` tests and a linked metric — because that generates test cases directly from the spec with no extra data files. Verify every method/command shape against `galtea <noun> <verb> --help` and the docs (`https://docs.galtea.ai/llms.txt`, any page + `.md`) before relying on it. Get install & auth working first (see the `galtea` skill); for a non-prod host, set `GALTEA_API_URL` (SDK) or `galtea login --host …` (CLI).
 
-## Key API facts (verified against SDK 4.33.0 / the API)
+## Key API facts (verified against a recent SDK / the current API)
+
+Mechanics the `galtea` skill already owns — install/auth, the `</dev/null` stdin rule, async polling, and the "tests must reach `SUCCESS`; `PENDING`/`AUGMENTING` are skipped" gotcha — are not repeated here; read them there. What follows is only what this loop adds on top or corrects.
 
 - **Product creation requires a `description`, and the SDK has no `products.create`.** Create the product via the CLI (`galtea products create name: … , description: …`) or the platform, then fetch it in the SDK with `client.products.get_by_name(...)`.
-- **`TestType` is `QUALITY` / `RED_TEAMING` / `SCENARIOS`** — not `ACCURACY`/`SECURITY`/`BEHAVIOR`. `SCENARIOS` generates from the spec alone; `QUALITY` generation needs an uploaded test/ground-truth file or a source test.
+- **`TestType` (`QUALITY`/`RED_TEAMING`/`SCENARIOS`) is owned by the `galtea` skill** — do not assume `ACCURACY`/`SECURITY`/`BEHAVIOR`. Loop-relevant difference: `SCENARIOS` generates from the spec alone, while `QUALITY` generation needs an uploaded test/ground-truth file or a source test.
 - **`SpecificationType` is `CAPABILITY` / `INABILITY` / `POLICY`.** `POLICY` specs require a `test_type` at creation (plus a `test_variant` for `QUALITY`/`RED_TEAMING`) and are the **only** spec type you can link metrics to. `CAPABILITY`/`INABILITY` specs omit `test_type` and derive their tests/metrics through the spec-driven flow (`/sdk/tutorials/specification-driven-evaluations`).
 - **The agent-callback entry point is `client.evaluations.run(version_id, agent, specification_ids)`** — not `inference_results.create_and_evaluate` (which logs one pre-computed output to a session).
 - **`tests.create` returns no job id.** Generation is async — poll `client.tests.get(id).status` until `SUCCESS`/`FAILED` (`TestStatus`: `PENDING`/`SUCCESS`/`FAILED`/`AUGMENTING`).
@@ -81,10 +83,12 @@ SID=$(galtea specifications create productId: "$PID", type: POLICY, \
       -o json </dev/null | jq -r .id)
 
 # Create a metric and link it to the POLICY spec (only POLICY specs take metrics).
-MID=$(galtea metrics create name: "billing-accuracy", source: PARTIAL_PROMPT, \
-      evaluatorModelName: "GPT-4.1-mini", \
-      judgePrompt: "Score 1 if the answer states the billing cycle, else 0.", \
-      evaluationParams: [input, actual_output] -o json </dev/null | jq -r .id)
+# Pipe JSON on stdin: a comma inside the judgePrompt value misparses in the
+# colon-shorthand form (Restish reads it as a field separator) — verified to
+# fail against the live CLI. JSON-on-stdin is the robust form for any value
+# containing commas or spaces.
+MID=$(echo '{"name":"billing-accuracy","source":"PARTIAL_PROMPT","evaluatorModelName":"GPT-4.1-mini","judgePrompt":"Score 1 if the answer states the billing cycle, else 0.","evaluationParams":["input","actual_output"]}' \
+      | galtea metrics create -o json | jq -r .id)
 echo "{\"metricIds\":[\"$MID\"]}" | galtea specifications link-metrics "$SID"
 
 # ── Stage 2: generate a SCENARIOS test from the spec, poll the test status ──
