@@ -5,7 +5,7 @@ description: End-to-end CLI walkthrough for running evaluations against a Galtea
 
 # Worked example -- evaluate a product version
 
-End-to-end flow for `galtea evaluations create-from-version` -- the one-shot path that cascades across the product's specifications, their linked metrics, and their linked tests. Use this when the user wants to "run the full eval pass" for a version.
+End-to-end flow for `galtea evaluations create-from-version` -- the one-shot path that cascades across the product's specifications, their linked metrics, and their linked datasets. Use this when the user wants to "run the full eval pass" for a version.
 
 ## Before you start
 
@@ -21,7 +21,7 @@ galtea products list -o json | jq '.[] | {id, name}'
 galtea versions list --product-ids <productId> -o json | jq '.[] | {id, name}'
 
 # 3. Kick off evaluations for the whole version. Galtea resolves the product's
-#    specifications, their linked metrics, and their linked tests automatically.
+#    specifications, their linked metrics, and their linked datasets automatically.
 #    Returns 202 with a jobId -- the actual evaluations are created asynchronously.
 #    </dev/null on the inline-shorthand form is required in non-TTY contexts
 #    (scripts, CI, agent harnesses); without it the command blocks on stdin
@@ -79,11 +79,11 @@ Terminal states for the poll:
 
 ## Common pitfalls
 
-- **Tests must be `status: SUCCESS`** before `create-from-version` will create evaluations against them. `PENDING` / `AUGMENTING` tests are skipped silently. Check `galtea tests list --product-ids <productId>` first if step 4 returns fewer evaluations than expected.
+- **Datasets must be `status: SUCCESS`** before `create-from-version` will create evaluations against them. `PENDING` / `AUGMENTING` datasets are skipped silently. Check `galtea datasets list --product-ids <productId>` first if step 4 returns fewer evaluations than expected.
 - **Credits are consumed** by the newly-created evaluations. Pre-flight by resolving the org id (`galtea auth get-current-user -f body.organizationId`), then `galtea organizations get-credit-status <organizationId>` (run `--help` for the exact arg shape) to inspect `totalCredits` / `usedCredits` / `remainingCredits`. If an org runs out mid-run, evaluations fail with a `message` in the body -- no dedicated HTTP status code, so inspect the message rather than matching on a code.
-- **Duplicate names** on related resources (products, versions, tests, metrics) return `400 Bad Request` with a body `message` containing the substring `"with the same"` (case-insensitive). Wording varies per entity -- see the duplicate-name gotcha in `SKILL.md` for examples. Do not blind-retry on any 400; parse the message first.
+- **Duplicate names** on related resources (products, versions, datasets, metrics) return `400 Bad Request` with a body `message` containing the substring `"with the same"` (case-insensitive). Wording varies per entity -- see the duplicate-name gotcha in `SKILL.md` for examples. Do not blind-retry on any 400; parse the message first.
 - **Stale local spec**. If `galtea evaluations create-from-version` errors with "unknown command" or a flag the docs say exists is missing, run `galtea sync` to refresh the OpenAPI command tree.
 
 ## Alternative creation paths
 
-`create-from-version` is only one entry point. For `create-from-session`, `create-from-inference-result`, `create-single-turn`, `retry`, and `replay-from-metrics`, see the "Evaluation creation paths" routing table in `SKILL.md`. Each one is a sibling under `galtea evaluations`; run `galtea evaluations --help` to see the full verb list.
+`create-from-version` is only one entry point. For `create-from-session`, `create-from-trace`, `create-single-turn`, `retry`, and `replay-from-metrics`, see the "Evaluation creation paths" routing table in `SKILL.md`. Each one is a sibling under `galtea evaluations`; run `galtea evaluations --help` to see the full verb list.
