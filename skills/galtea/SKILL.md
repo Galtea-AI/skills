@@ -76,7 +76,7 @@ The `MetricSource` enum drives this:
 - **Self-hosted / user-computed** (`SELF_HOSTED`): You compute the score on your own infrastructure and upload it as a `float` -- either pre-calculated, or computed at runtime via an SDK custom-score class (see `/concepts/metric/evaluation-types` and `/sdk/tutorials/evaluate-with-custom-metrics` for current SDK class names). User-creatable.
 - **Built-in deterministic** (`DETERMINISTIC`, `DEEPEVAL`): Platform-defined classic NLP and DeepEval metrics (BLEU, ROUGE, JSON field match, etc.). Galtea computes the score. **Not user-creatable** -- pick from the catalog.
 
-Custom-vs-built-in is orthogonal: users can create custom metrics in any of the user-creatable types above. Fetch `/concepts/metrics` and `/concepts/metric/evaluation-types` for the authoritative catalog.
+Custom-vs-built-in is orthogonal: users can create custom metrics in any of the user-creatable types above. Fetch `/concepts/metric` and `/concepts/metric/evaluation-types` for the authoritative catalog.
 
 ## Core Rules
 
