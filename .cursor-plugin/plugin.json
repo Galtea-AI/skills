@@ -2,7 +2,7 @@
   "name": "galtea",
   "displayName": "Galtea",
   "version": "1.0.0",
-  "description": "Use Galtea directly in Cursor through a preconfigured Galtea skill. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces through natural conversation.",
+  "description": "Use Galtea directly in Cursor through a preconfigured Galtea skill. Authenticate, manage products, versions, specifications, datasets, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces through natural conversation.",
   "author": {
     "name": "Galtea AI",
     "email": "support@galtea.ai"

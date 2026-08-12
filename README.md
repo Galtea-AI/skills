@@ -6,7 +6,7 @@
 
 | Skill | Description |
 |---|---|
-| [galtea](./skills/galtea) | Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces. |
+| [galtea](./skills/galtea) | Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, datasets, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces. |
 | [galtea-loop](./skills/galtea-loop) | Run the full Galtea improvement loop for an AI product: define specs, generate test cases, evaluate the product against them, then iterate the product and specs based on what failed. Vendor-neutral; drives Galtea via the CLI or the Python SDK. |
 
 ## Installation
@@ -67,11 +67,11 @@ API keys are found in the Galtea dashboard under **Settings → API Keys**. Each
 Once installed, the agent will automatically use this skill when relevant — for example:
 
 - Setting up a new product version with an endpoint connection
-- Writing specifications and generating tests + metrics from them
+- Writing specifications and generating datasets + metrics from them
 - Running evaluations via `fromVersion`, `fromSession`, or `fromInferenceResult`
 - Polling async evaluations and reading their scores
-- Tracing agent internals (tool calls, LLM calls) as Trace records
-- Querying products, tests, metrics, sessions, and traces
+- Tracing agent internals (tool calls, LLM calls) as Span records
+- Querying products, datasets, metrics, sessions, traces, and spans
 
 For the full Galtea-side docs page on this skill, see [docs.galtea.ai/sdk/integrations/agent-skill](https://docs.galtea.ai/sdk/integrations/agent-skill).
 
