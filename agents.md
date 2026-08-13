@@ -6,7 +6,7 @@ This repository ships [Agent Skills](https://agentskills.io) for the [Galtea](ht
 
 | Skill | Purpose |
 |---|---|
-| [`galtea`](./skills/galtea/) | Interact with the Galtea Platform API: authenticate, manage products/versions/datasets/metrics/endpoint-connections, run and monitor evaluations, inspect sessions and traces. |
+| [`galtea`](./skills/galtea/) | Interact with the Galtea Platform API: authenticate, manage products/versions/datasets/metrics/endpoint-connections, run and monitor evaluations, inspect sessions, traces, and spans. |
 | [`galtea-loop`](./skills/galtea-loop/) | Orchestrate the end-to-end Galtea improvement loop for an AI product: define specs, generate datasets, evaluate, iterate. Vendor-neutral; composes the `galtea` skill for CLI/SDK mechanics. |
 
 ## Entrypoint
