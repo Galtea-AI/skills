@@ -79,7 +79,7 @@ spec = client.specifications.create(
 
 Verify with `galtea specifications list --product-ids <productId>` / `client.specifications.list(...)`.
 
-## Stage 2 — Generate test cases
+## Stage 2 — Generate datasets
 
 Goal: for each specification, a `Dataset` whose generated `TestCase`s probe whether the product upholds that spec. Generation is **asynchronous** — poll until the dataset is ready.
 

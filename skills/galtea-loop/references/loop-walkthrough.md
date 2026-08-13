@@ -47,7 +47,7 @@ metric = client.metrics.create(
     evaluation_params=["input", "actual_output"])
 client.specifications.link_metrics(spec.id, [metric.id])
 
-# ── Stage 2: generate test cases (async; Behavior generates from the spec) ──
+# ── Stage 2: generate the dataset (async; Behavior generates from the spec) ──
 dataset = client.datasets.create(product_id=product.id, specification_id=spec.id,
                                  type="BEHAVIOR", name="billing-behavior", max_test_cases=3)
 # datasets.create returns NO job id — poll the dataset's own status to a terminal state.

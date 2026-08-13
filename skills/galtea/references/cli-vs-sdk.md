@@ -17,7 +17,7 @@ Galtea exposes the same backend through two surfaces: the **`galtea` CLI** (one 
 
 ## When to recommend the Python SDK (`pip install galtea`)
 
-- Any workflow that involves **running the user's AI product**. The SDK wraps the agent function loop and handles batching, retries, and inference logging so the user does not have to write that plumbing.
+- Any workflow that involves **running the user's AI product**. The SDK wraps the agent function loop and handles batching, retries, and trace logging so the user does not have to write that plumbing.
 - **Conversation simulation** -- the SDK's simulator plays the user role across multi-turn scenarios, calling the agent each turn.
 - **Tracing agent internals** -- decorator and context-manager forms capture tool calls and LLM calls as `Span` records.
 - **Production monitoring with inline logging** -- single-call utilities that run the agent and persist the trace together.
@@ -30,7 +30,7 @@ If Python is not an option and the user still needs one of the SDK-leaning workf
 Identifiers below are routing hints, not canonical names. Fetch the relevant `/sdk/api/*` page in `llms.txt` (see `SKILL.md`'s "Discover docs and commands" section) before advising on the exact method signature -- the SDK evolves frequently.
 
 - **Agent function** -- the user's AI product, wrapped by the SDK and called by `galtea.evaluations.run(version_id, agent=...)` and the simulator. The SDK auto-detects the agent's input shape **from the first parameter's type annotation**, so annotate it deliberately. The mapping below reflects current SDK behavior; `/sdk/api/*` remains the source of truth if it ever changes:
-  - **Recommended:** Use `def my_agent(messages: list[dict]) -> str` (receives the full chat history), or the `galtea.Agent` / `galtea.AgentInput` adapter for structured input plus session/inference context.
+  - **Recommended:** Use `def my_agent(messages: list[dict]) -> str` (receives the full chat history), or the `galtea.Agent` / `galtea.AgentInput` adapter for structured input plus session/trace context.
   - **Annotation → argument-shape mapping:**
     - `str` → the latest user message as a plain string.
     - `galtea.AgentInput` → a structured object (messages, session_id, trace_id, context_data). `trace_id` is the renamed `inference_result_id`; the old name still resolves, and the wire field stays `inferenceResultId`.
