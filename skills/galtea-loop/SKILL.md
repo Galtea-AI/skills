@@ -60,7 +60,9 @@ Create the product, then each approved spec. **Product creation requires a `desc
 # CLI (see galtea skill for the </dev/null stdin gotcha). name AND description required.
 galtea products create name: "Support Agent", \
   description: "Customer support agent for billing questions" </dev/null
-galtea specifications create productId: <productId>, type: CAPABILITY, \
+# A specification needs a name too; the spec schema does not mark it required.
+galtea specifications create productId: <productId>, name: "billing-questions", \
+  type: CAPABILITY, \
   description: "Answers billing questions using the customer's plan data" </dev/null
 ```
 
@@ -69,7 +71,8 @@ galtea specifications create productId: <productId>, type: CAPABILITY, \
 product = client.products.get_by_name("Support Agent")
 spec = client.specifications.create(
     product_id=product.id,
-    type="CAPABILITY",       # CAPABILITY / INABILITY need no test_type; POLICY does (see Stage 2)
+    name="billing-questions",   # required, and the spec schema does not say so
+    type="CAPABILITY",       # CAPABILITY / INABILITY need no dataset_type; POLICY does (see Stage 2)
     description="Answers billing questions using the customer's plan data",
 )
 ```
@@ -80,10 +83,11 @@ Verify with `galtea specifications list --product-ids <productId>` / `client.spe
 
 Goal: for each specification, a `Dataset` whose generated `TestCase`s probe whether the product upholds that spec. Generation is **asynchronous** — poll until the dataset is ready.
 
-`DatasetType` has a different name per surface: the SDK takes `ACCURACY` / `SECURITY` / `BEHAVIOR`, while the CLI and raw API take the wire values `QUALITY` / `RED_TEAMING` / `SCENARIOS`. The `galtea` skill's dataset-types table is the reference. What the loop adds on top is how each type generates and how it wires to a spec — the spine that is easiest to get silently wrong:
+`DatasetType` reads differently per surface: the SDK prefers `ACCURACY` / `SECURITY` / `BEHAVIOR` and also accepts the wire values, while the CLI and raw API take only the wire values `QUALITY` / `RED_TEAMING` / `SCENARIOS`. The `galtea` skill's dataset-types table is the reference. What the loop adds on top is how each type generates and how it wires to a spec — the spine that is easiest to get silently wrong:
 
-- **Behavior** (`BEHAVIOR` in the SDK, `SCENARIOS` on the CLI) generates test cases **directly from the spec**, no extra input — the simplest starting point. Accuracy generation instead needs an uploaded dataset/ground-truth file or a source dataset, and Accuracy/Security require a `test_variant`.
-- **`POLICY`** specs take a `test_type` at creation and are the **only** spec type you can link a metric to (`specifications.link_metrics`) — and a linked metric is what makes an evaluation produce a score. **`CAPABILITY`/`INABILITY`** specs omit `test_type` and derive their datasets/metrics through the spec-driven flow (`https://docs.galtea.ai/sdk/tutorials/specification-driven-evaluations.md`). The `test_type` parameter kept its name.
+- **Behavior** (`BEHAVIOR` in the SDK, `SCENARIOS` on the CLI) generates test cases **directly from the spec**, no extra input — the simplest starting point. Accuracy generation instead needs an uploaded dataset/ground-truth file or a source dataset, and Accuracy/Security require a `dataset_variant`.
+- **`POLICY`** specs take a `dataset_type` at creation. **`POLICY` and `CAPABILITY`** specs can both link a metric (`specifications.link_metrics`) — and a linked metric is what makes an evaluation produce a score; `INABILITY` cannot. **`CAPABILITY`/`INABILITY`** specs omit `dataset_type` and derive their datasets/metrics through the spec-driven flow (`https://docs.galtea.ai/sdk/tutorials/specification-driven-evaluations.md`).
+- **The parameter name split in the rename.** The wire field stays `testType` (and `testVariant`), so the CLI keeps `testType: SCENARIOS`. The SDK parameters are now `dataset_type` and `dataset_variant`; `test_type` and `test_variant` still work as deprecated aliases and emit a warning.
 
 ```bash
 # CLI: create a Behavior dataset linked to a spec, then poll the DATASET status.

@@ -13,7 +13,9 @@ Mechanics the `galtea` skill already owns — install/auth, the `</dev/null` std
 
 - **Product creation requires a `description`, and the SDK has no `products.create`.** Create the product via the CLI (`galtea products create name: … , description: …`) or the platform, then fetch it in the SDK with `client.products.get_by_name(...)`.
 - **`DatasetType` reads differently per surface** — SDK `ACCURACY`/`SECURITY`/`BEHAVIOR`, CLI and raw API `QUALITY`/`RED_TEAMING`/`SCENARIOS`. The mapping table is owned by the `galtea` skill. Loop-relevant difference: Behavior generates from the spec alone, while Accuracy generation needs an uploaded dataset/ground-truth file or a source dataset.
-- **`SpecificationType` is `CAPABILITY` / `INABILITY` / `POLICY`.** `POLICY` specs require a `test_type` at creation (plus a `test_variant` for Accuracy/Security) and are the **only** spec type you can link metrics to. `CAPABILITY`/`INABILITY` specs omit `test_type` and derive their datasets/metrics through the spec-driven flow (`/sdk/tutorials/specification-driven-evaluations`). The `test_type` / `testType` parameter kept its name through the rename.
+- **`SpecificationType` is `CAPABILITY` / `INABILITY` / `POLICY`.** `POLICY` specs require a `dataset_type` at creation (plus a `dataset_variant` for Accuracy/Security). `POLICY` and `CAPABILITY` specs can both link metrics; `INABILITY` cannot. `CAPABILITY`/`INABILITY` specs omit `dataset_type` and derive their datasets/metrics through the spec-driven flow (`/sdk/tutorials/specification-driven-evaluations`).
+- **The type parameter name split in the rename.** The wire field stays `testType`, so the CLI keeps `testType: SCENARIOS`. The SDK parameter is now `dataset_type` (and `dataset_variant`), with `test_type` / `test_variant` accepted as deprecated aliases that warn.
+- **`specifications.create` requires a `name`.** It is a required positional argument in the SDK and a 400 without it on the CLI, even though the published schema does not mark it required.
 - **The agent-callback entry point is `client.evaluations.run(version_id, agent, specification_ids)`** — not `traces.create_and_evaluate` (which logs one pre-computed output to a session).
 - **`datasets.create` returns no job id.** Generation is async — poll `client.datasets.get(id).status` until `SUCCESS`/`FAILED` (`DatasetStatus`: `PENDING`/`SUCCESS`/`FAILED`/`AUGMENTING`).
 
@@ -31,8 +33,10 @@ client = Galtea(api_key="gsk_...")   # or Galtea() if GALTEA_API_KEY is exported
 #   galtea products create name: "Support Agent", description: "..." </dev/null
 product = client.products.get_by_name("Support Agent")
 
+# A spec needs a name as well; the spec schema does not mark it required.
 spec = client.specifications.create(
-    product_id=product.id, type="POLICY", test_type="SCENARIOS",
+    product_id=product.id, name="billing-cycle-disclosure",
+    type="POLICY", dataset_type="BEHAVIOR",
     description="Always states the billing cycle when asked about billing")
 
 # ── Metric linked to the (POLICY) spec — needed for evaluation to score ──
@@ -77,7 +81,8 @@ Use the CLI when Python is unavailable or the product is reached over HTTP via a
 PID=$(galtea products create name: "Support Agent", \
       description: "Customer support agent for billing questions" \
       -o json </dev/null | jq -r .id)
-SID=$(galtea specifications create productId: "$PID", type: POLICY, \
+SID=$(galtea specifications create productId: "$PID", \
+      name: "billing-cycle-disclosure", type: POLICY, \
       testType: SCENARIOS, \
       description: "Always states the billing cycle when asked about billing" \
       -o json </dev/null | jq -r .id)
@@ -114,8 +119,10 @@ while [ "$(galtea evaluations list --version-ids "$VID" --statuses PENDING -o js
 done
 
 # ── Read outcomes ──────────────────────────────────────────────────────
-galtea evaluations list --version-ids "$VID" -o json \
-  | jq '.[] | {id, specificationId, status, score, reason}'
+# An Evaluation carries metricId, not specificationId: the link to a spec runs
+# through the metric. To group by spec, filter one spec at a time.
+galtea evaluations list --version-ids "$VID" --specification-ids "$SID" -o json \
+  | jq '.[] | {id, metricId, status, score, reason}'
 ```
 
 ## Stage 4 — iterate (both surfaces)
