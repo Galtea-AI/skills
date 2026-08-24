@@ -5,13 +5,13 @@
     "email": "support@galtea.ai"
   },
   "metadata": {
-    "description": "A preconfigured Galtea skill. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces through natural conversation.",
+    "description": "A preconfigured Galtea skill. Authenticate, manage products, versions, specifications, datasets, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions, traces, and spans through natural conversation.",
     "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "galtea",
-      "description": "Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, tests, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions and traces.",
+      "description": "Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, datasets, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions, traces, and spans.",
       "source": "./",
       "strict": false,
       "skills": ["./skills/galtea", "./skills/galtea-loop"]
