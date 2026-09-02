@@ -260,7 +260,7 @@ they hold:
 | The user has | Path |
 |---|---|
 | A CSV of rows | `galtea.datasets.create(dataset_file_path="./rows.csv")` -- rows are parsed server-side |
-| Files to attach to rows (a document, an audio clip) | Upload the bytes, then reference the storage URI in the row's `input` |
+| Documents or images to attach to rows | Upload the bytes, then reference the storage URI in the row's `input` |
 | Both | Add an `input_file_paths` column to the CSV; the SDK uploads each file first |
 
 **Use the Python SDK for any upload.** The CLI mints an upload URL and creates the dataset, but
@@ -276,6 +276,11 @@ Two things that change what you tell the user, before any command:
 - **A judge cannot read an uploaded file.** Every metric that reads the input is **skipped**, not
   scored. Say this before the user builds a document dataset, and route them to scoring their
   pipeline's output instead.
+- **File types are a fixed list**, checked before any upload: documents (`pdf`, `docx`, `xlsx`,
+  `pptx`, `rtf`), images (`png`, `jpg`, `jpeg`, `tiff`, `tif`, `bmp`, `webp`, `heic`, `heif`,
+  `gif`) and text or data (`txt`, `csv`, `md`, `html`, `xml`, `json`, `eml`). **Audio is not on
+  it** -- a voice clip is its own part type, not a file. State the list before the user picks a
+  file. A test case also caps at 20 files and 20 MB *in total*, not per file.
 
 Full procedure -- required columns per dataset type, the all-or-nothing row validation, the
 limits, the upload envelope, and the terminal path -- in
@@ -298,7 +303,7 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Trace agent internals | Capture internal tool calls / LLM calls as Span records | `/sdk/tutorials/tracing-agent-operations` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
 | Upload a CSV of existing test cases | Create the dataset from a local CSV; rows are parsed server-side and cost no credits | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
-| Test an AI that reads documents or audio | Upload each file, attach it to a test case input, score the pipeline's output | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
+| Test an AI that reads documents | Upload each file, attach it to a test case input, score the pipeline's output | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
 
 For other workflows (custom datasets, judge prompts, agentic evaluation, custom metrics, platform-only inferences, Langfuse integration, model tracking), grep `llms.txt` for the relevant tutorial.
 

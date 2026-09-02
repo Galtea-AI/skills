@@ -6,7 +6,7 @@ to generate it. Two paths, and they compose:
 | The user has | Path | Surface |
 |---|---|---|
 | A CSV of rows | Upload the CSV as the dataset file | SDK, dashboard |
-| Files (a document, an audio clip) to attach to rows | Presign, PUT the bytes, reference the URI in the row | SDK, or CLI plus `curl` |
+| Documents or images to attach to rows | Presign, PUT the bytes, reference the URI in the row | SDK, or CLI plus `curl` |
 | Both | Upload the files first, then reference them from the CSV | SDK does both in one call |
 
 **Prefer the Python SDK for any upload.** The CLI can mint an upload URL and create a dataset,
@@ -177,9 +177,34 @@ Summarize this contract,"{""holder"": ""M. Ruiz""}",./docs/contract-a.pdf
 
 The second row has no text, only a file. That is accepted.
 
+**A cell may also name a file already in storage.** A value starting with `s3://`, `http://`, or
+`https://` is treated as a reference, not a local path: nothing is read from this machine and
+nothing is uploaded, and the URI is written into the row as sent. This is how a second dataset
+points at a document the first one uploaded, which is the normal shape when one document is scored
+at several pipeline stages. A reference also counts against neither the local size total nor the
+extension check, because the API owns that object and validates it on write.
+
 Within one `datasets.create` call the CSV path **does** deduplicate by absolute path, so the same
 document referenced by twenty rows uploads once. Every row is validated before the first upload,
 so a bad path costs no transfer. Row errors are prefixed with the row number.
+
+### Accepted file types
+
+A judge has to be able to read the file, so the extension is checked against a fixed list:
+
+| Group | Extensions |
+|---|---|
+| Documents | `pdf`, `docx`, `xlsx`, `pptx`, `rtf` |
+| Images | `png`, `jpg`, `jpeg`, `tiff`, `tif`, `bmp`, `webp`, `heic`, `heif`, `gif` |
+| Text and data | `txt`, `csv`, `md`, `html`, `xml`, `json`, `eml` |
+
+Anything else is refused, and the error names the accepted list. **Audio is not on it** -- a voice
+clip is its own part type, not a file part. Archives, video, and executables are refused too.
+
+State the list to the user *before* they pick a file. The SDK checks the extension locally before
+uploading anything, so a wrong type costs no transfer. On the API side the check uses the
+`filename` you send, falling back to the stored object's own name, so omitting `filename` does not
+slip a type past the list.
 
 ### Limits on attached files
 
@@ -209,10 +234,13 @@ metrics, where the user computes the score, are never skipped.
 - **Platform-run inference is refused.** Galtea will not call the user's endpoint with a file
   input, because the request shape a document pipeline expects is not defined. The user runs
   their own pipeline and uploads the result.
-- **Editing must keep the structure.** Sending `input` as a plain string on a test case that has
-  files is refused, because a bare string would drop every attachment. Send the object with the
-  `content` array holding the files to keep. Remember that editing a test case's content forks a
-  new revision and retires the old row, so the returned id is new.
+- **An edit can never leave the test case with no file.** Two separate refusals enforce it:
+  sending `input` as a plain string is refused, because a bare string would drop every
+  attachment; and sending a structured `input` whose `content` keeps no file part is refused too.
+  Add, replace, and remove are all fine while at least one file remains -- always include the
+  files you want to keep. If the user really wants a text-only test case, delete this one and
+  create it fresh. Remember that editing a test case's content forks a new revision and retires
+  the old row, so the returned id is new.
 - Creating a test case with files requires an authenticated caller, which an API key satisfies.
 
 ## Sending bytes from the terminal
