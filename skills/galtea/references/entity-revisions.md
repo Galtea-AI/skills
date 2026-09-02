@@ -41,37 +41,38 @@ So to reconstruct a family you must list broadly and group client-side:
 
 ```bash
 # Every revision of every test case in one dataset, then group by testCaseGroupId yourself.
-galtea test-cases list --test-ids <datasetId> --include-legacy </dev/null
+# Superseded rows come back by default, so no flag is needed to see them.
+galtea test-cases list --test-ids <datasetId>
 ```
 
 `Version` is the one exception, and only downward by one hop:
 
 ```bash
 # The versions created directly from this one. Children only, one level.
-galtea versions list --parent-version-ids <versionId> </dev/null
+galtea versions list --parent-version-ids <versionId>
 ```
 
-## `--include-legacy` defaults are opposite per entity
+## `--include-legacy` includes superseded rows by default
 
-This is the trap most worth remembering. The same flag name behaves differently:
+Both list endpoints **include** superseded revisions unless you say otherwise:
 
 | Command | Default | So a bare list gives you |
 |---|---|---|
-| `galtea test-cases list` | `true` | **every revision, superseded ones included** |
-| `galtea metrics list` | `false` | **only the active head of each family** |
+| `galtea test-cases list` | include | every revision, superseded ones mixed in |
+| `galtea metrics list` | include | every revision, superseded ones mixed in |
 
-A bare `galtea test-cases list` therefore returns rows a user thinks they deleted, and counting
-them overstates the dataset size. Conversely, a bare `galtea metrics list` hides the history, so
-pass `--include-legacy` when the user asks what a judge used to look like.
+So a bare `galtea test-cases list` returns rows the user thinks they replaced, and counting them
+overstates the dataset size. The same is true of a metric list. Whenever you report a count or
+show the user "what is in here now", pass the flag off.
 
 **To turn a boolean flag off you must use the `=` form.** Write `--include-legacy=false`, never
 `--include-legacy false` -- these are bare flags, so the space form leaves the flag true and
-`false` is parsed as a positional argument. This is the only way to exclude superseded test
-cases, since that endpoint defaults to including them.
+`false` is parsed as a positional argument.
 
-The metric flag is documented as "include legacy/deprecated metrics", which reads like it is
-about deprecation. It is the revision-family filter. Do not tell a user their old metric was
-deprecated by Galtea when it was superseded by their own revision.
+The test-case parameter is documented as "include superseded revisions", but the metric one is
+documented as "include legacy/deprecated metrics" and states no default. That wording invites two
+mistakes: assuming metrics behave the opposite way, and telling a user Galtea deprecated their
+metric when in fact their own revision superseded it.
 
 ## Per entity
 
@@ -153,8 +154,8 @@ A new revision does not re-score anything by itself. Existing evaluations still 
 revision they ran against. Two commands replay onto the new revision:
 
 ```bash
-galtea test-cases get-replay-candidate-count <testCaseId> </dev/null
-galtea metrics get-replay-candidate-count <metricId> </dev/null
+galtea test-cases get-replay-candidate-count <testCaseId>
+galtea metrics get-replay-candidate-count <metricId>
 ```
 
 Then `galtea evaluations replay-from-test-cases` or `galtea evaluations replay-from-metrics`.
