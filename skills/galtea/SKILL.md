@@ -252,6 +252,35 @@ The four create paths split into two groups by response shape:
 
 In both groups, individual evaluations start at `status: PENDING` and reach `SUCCESS` / `FAILED` / `SKIPPED` / `PENDING_HUMAN` as workers process them. Prefer `galtea evaluations list --ids …` (or `--version-ids` / `--session-ids` if the scope already filters them) over a per-id loop with `evaluations get`; the batch call traffics one HTTP request per poll cycle regardless of how many evaluations you queued. Treat `PENDING_HUMAN` as terminal for polling -- it waits for a human reviewer.
 
+## Upload a dataset the user already has
+
+When the user already has the test content, upload it instead of generating it. Route by what
+they hold:
+
+| The user has | Path |
+|---|---|
+| A CSV of rows | `galtea.datasets.create(dataset_file_path="./rows.csv")` -- rows are parsed server-side |
+| Files to attach to rows (a document, an audio clip) | Upload the bytes, then reference the storage URI in the row's `input` |
+| Both | Add an `input_file_paths` column to the CSV; the SDK uploads each file first |
+
+**Use the Python SDK for any upload.** The CLI mints an upload URL and creates the dataset, but
+it cannot send file bytes -- `field: @/path` inlines the file's text as a string instead of
+uploading it. For a terminal-only flow, `galtea storage generate-put-url` then `curl -X PUT`.
+
+Two things that change what you tell the user, before any command:
+
+- **A dataset created from a file skips generation**, so it costs no credits and ignores
+  `max_test_cases`. There is no empty-dataset mode: creating a dataset *without* a file always
+  runs a generator and spends credits. And `test-cases create` is one request per row, with no
+  batch endpoint.
+- **A judge cannot read an uploaded file.** Every metric that reads the input is **skipped**, not
+  scored. Say this before the user builds a document dataset, and route them to scoring their
+  pipeline's output instead.
+
+Full procedure -- required columns per dataset type, the all-or-nothing row validation, the
+limits, the upload envelope, and the terminal path -- in
+[references/custom-dataset-upload.md](references/custom-dataset-upload.md).
+
 ## Common Workflows
 
 Each workflow below maps to a docs page. Fetch the page via `llms.txt` before advising -- the skill provides routing, not the full procedure.
@@ -268,6 +297,8 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Set up human evaluation | Create UserGroups, assign metrics, reviewers claim + score via platform | `/sdk/tutorials/human-evaluation` |
 | Trace agent internals | Capture internal tool calls / LLM calls as Span records | `/sdk/tutorials/tracing-agent-operations` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
+| Upload a CSV of existing test cases | Create the dataset from a local CSV; rows are parsed server-side and cost no credits | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
+| Test an AI that reads documents or audio | Upload each file, attach it to a test case input, score the pipeline's output | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
 
 For other workflows (custom datasets, judge prompts, agentic evaluation, custom metrics, platform-only inferences, Langfuse integration, model tracking), grep `llms.txt` for the relevant tutorial.
 
@@ -294,6 +325,9 @@ Runtime behaviors that are not in `--help` text -- these are the only items a we
 - **Span rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading. Spans are `galtea spans` on the CLI and live at `/traces` on the wire.
 - **Credits are consumed** by evaluations and dataset generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
 - **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `{error: string, message: string}`. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
+- **A bad row in an uploaded dataset CSV returns `500`, and deletes the dataset.** Validation is all-or-nothing: the first missing required column stops the whole import, the insert is one transaction, and the dataset row itself is then deleted, so the user is never left with a partial dataset. The row-level message is raised as a plain error, so it lands in the server-error branch -- `Row 3 is missing required fields: input` arrives as a `500`, not a `400`. Read `message`, do not judge by the status. The row number counts parsed non-empty rows and excludes the header, so it may not match the file's line number. A header-only CSV does not error; it creates an empty dataset.
+- **The presigned-URL response does not contain `url`.** `galtea storage generate-put-url` returns `{downloadPresignedUrl, uploadPresignedUrl}`, but the operation's OpenAPI description documents `{url}`. The spec is wrong here, so an agent that trusts `--help` reads a field that does not exist. Its `key` argument is the **file name**, not a storage path -- the key is minted server-side under the organization's own folder, and a URI outside that folder is refused at write time. Both URLs expire in 24 hours, and an upload URL is a write capability for that object: never echo one into a log, a reply, or a bug report.
+- **`credits_used` in a dataset CSV is charged to the organization.** It is an accepted column, so a value copied out of an export spends real credits on import. Drop the column unless the user means it. In the same file, `tag` sets the test case's variant while a column named `variant` is silently ignored.
 - **`galtea sync` is needed after API releases.** If `galtea <noun> <verb>` returns "unknown command" but the docs say it exists, the local spec cache is stale -- run `galtea sync` and retry.
 
 ## Skill Feedback
