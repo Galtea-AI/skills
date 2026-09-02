@@ -100,9 +100,9 @@ row.** Tell the user this before they edit, because nothing in the command outpu
 happened.
 
 A fork is triggered only by a change to evaluation content: `input`, `expectedOutput`, `context`,
-`expectedTools`, `scenario`, `userPersona`, `goal`, `stoppingCriterias`, `maxIterations`, or
-`languageCode`. Everything else edits in place, including the annotation fields (`userScore`,
-`userScoreReason`, `reviewedById`) and `variant`. Re-sending an unchanged value is a no-op and
+`expectedTools`, `scenario`, `userPersona`, `goal`, `stoppingCriterias`, `maxIterations`,
+`languageCode`, or `gender`. Everything else edits in place, including the annotation fields
+(`userScore`, `userScoreReason`, `reviewedById`) and `variant`. Re-sending an unchanged value is a no-op and
 forks nothing.
 
 ```bash
