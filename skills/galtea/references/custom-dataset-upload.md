@@ -46,6 +46,15 @@ creates the dataset pointing at the stored object. Rows are parsed server-side.
 `dataset_file_path` replaced `test_file_path`. The old name still works and emits a deprecation
 warning; the new name wins if both are given.
 
+**This needs `galtea>=5.0`.** The `datasets` service and `dataset_file_path` arrived in 5.0.0.
+On a 4.x install neither exists: `galtea.datasets` raises `AttributeError` and the call is
+`galtea.tests.create(test_file_path=...)`. Check with `pip show galtea` before you conclude the
+platform is at fault, and upgrade rather than writing to the old surface.
+
+**`Galtea()` takes no host argument.** It reads `GALTEA_API_URL` from the environment and
+defaults to production, so a dev key with that variable unset fails with a bare `401` that names
+nothing. Export it before the first call when the user is not on production.
+
 **Dataset type names differ per surface.** The SDK takes `ACCURACY` / `SECURITY` / `BEHAVIOR`;
 the CLI and raw API take `QUALITY` / `RED_TEAMING` / `SCENARIOS`. Same three things.
 
@@ -227,6 +236,14 @@ This is the single most important thing to tell a user before they build a docum
 The workflow that does work: run the document through their own pipeline, upload the output, and
 score the output with output-only metrics such as the JSON field match family. Self-hosted
 metrics, where the user computes the score, are never skipped.
+
+**The user cannot write their own output-only judge.** `POST /metrics` refuses an AI-evaluated
+metric whose `evaluationParams` omits `input` (`"evaluationParams" must include "input" -- the
+evaluator always provides these to the judge`), so every custom judge reads the input and every custom judge is
+therefore skipped on a file-carrying input. Output-only scoring means the platform's built-in
+deterministic metrics (JSON Field Match, JSON Field Match (Normalized), Text Match, Text
+Similarity, URL Validation, ROUGE, BLEU, METEOR, IOU, Spatial Match, Tool Correctness) or a
+self-hosted metric. Offer those by name instead of suggesting a custom rubric.
 
 ## What a file-carrying test case cannot do
 
