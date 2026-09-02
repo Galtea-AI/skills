@@ -69,6 +69,17 @@ show the user "what is in here now", pass the flag off.
 `--include-legacy false` -- these are bare flags, so the space form leaves the flag true and
 `false` is parsed as a positional argument.
 
+**Do not combine `--include-legacy=false` with `--ids`.** The server compares the rows it
+returns against the ids you asked for, so an id the flag legitimately excluded comes back as
+`Metric <id> not found` -- a 404 for a row that exists and is merely superseded. Filter by a
+relation instead (`--names`, `--product-ids`, `--test-ids`) whenever you turn the flag off.
+
+**More than one body field needs commas between them.** Write
+`galtea metrics create name: "x", parentMetricId: <id>`. Without the commas the shorthand parser
+swallows every later field into the first field's string value and the write fails naming the
+wrong field (`"name" is required`), so the mistake does not look like a syntax error. A
+single-field body is safe either way.
+
 The test-case parameter is documented as "include superseded revisions", but the metric one is
 documented as "include legacy/deprecated metrics" and states no default. That wording invites two
 mistakes: assuming metrics behave the opposite way, and telling a user Galtea deprecated their
@@ -84,7 +95,7 @@ from.
 
 ```bash
 # A "revision" is just a new version that names its parent.
-galtea versions create productId: <id> name: "v2" parentVersionId: <parentId> </dev/null
+galtea versions create productId: <id>, name: "v2", parentVersionId: <parentId> </dev/null
 ```
 
 The parent stays fully active: it still runs, still evaluates, and still appears in a bare list.
@@ -134,7 +145,7 @@ edited at all -- changing one means creating a revision.
 
 ```bash
 # Creating with a parent joins its family and flips the parent to legacy.
-galtea metrics create name: "answer-relevancy-v2" parentMetricId: <parentId> </dev/null
+galtea metrics create name: "answer-relevancy-v2", parentMetricId: <parentId> </dev/null
 ```
 
 Optimization is the same mechanism run by the platform: `galtea metrics optimize <id>` creates a
