@@ -78,7 +78,9 @@ relation instead (`--names`, `--product-ids`, `--test-ids`) whenever you turn th
 `galtea metrics create name: "x", parentMetricId: <id>`. Without the commas the shorthand parser
 swallows every later field into the first field's string value and the write fails naming the
 wrong field (`"name" is required`), so the mistake does not look like a syntax error. A
-single-field body is safe either way.
+single-field body is safe either way. A value that itself contains a comma, such as a judge
+prompt, and any array field such as `evaluationParams`, cannot go through the shorthand at all:
+pipe the body as JSON on stdin.
 
 The test-case parameter is documented as "include superseded revisions", but the metric one is
 documented as "include legacy/deprecated metrics" and states no default. That wording invites two
