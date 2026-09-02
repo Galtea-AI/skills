@@ -45,6 +45,16 @@ Supporting entities: `Model` (LLM the product runs on, linked to a `Version`) is
 
 Read [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) for the canonical diagram, schema-validated relationships, and per-concept docs pages.
 
+### Revisions and history
+
+`Version`, `TestCase`, and `Metric` keep history. Nothing else does -- and **a `Dataset` itself
+has no revisions**, only the `TestCase`s inside it, which is the answer users most often get
+wrong. The three mechanisms differ: editing a `TestCase` forks a new revision and retires the old
+row, a `Metric` revision is created rather than edited, and a `Version` parent link is provenance
+only with nothing retired. No entity has a revision number, and no endpoint returns a family's
+history. Before answering "can I version X?", read
+[references/entity-revisions.md](references/entity-revisions.md).
+
 ### Two evaluation contexts
 
 | Context | When to use | How it works |
@@ -268,6 +278,7 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Set up human evaluation | Create UserGroups, assign metrics, reviewers claim + score via platform | `/sdk/tutorials/human-evaluation` |
 | Trace agent internals | Capture internal tool calls / LLM calls as Span records | `/sdk/tutorials/tracing-agent-operations` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
+| Version a test case or a judge | Edit a test case to fork a revision, or create a metric with `parentMetricId`; then replay | [references/entity-revisions.md](references/entity-revisions.md) |
 
 For other workflows (custom datasets, judge prompts, agentic evaluation, custom metrics, platform-only inferences, Langfuse integration, model tracking), grep `llms.txt` for the relevant tutorial.
 
@@ -294,6 +305,9 @@ Runtime behaviors that are not in `--help` text -- these are the only items a we
 - **Span rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading. Spans are `galtea spans` on the CLI and live at `/traces` on the wire.
 - **Credits are consumed** by evaluations and dataset generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
 - **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `{error: string, message: string}`. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
+- **`--include-legacy` defaults the opposite way on test cases and metrics.** `galtea test-cases list` includes superseded revisions **by default**, so a bare list returns rows the user thinks they replaced and any count overstates the dataset. `galtea metrics list` **excludes** them by default, so a bare list hides a judge's history. To turn a boolean flag off use the `=` form -- `--include-legacy=false`; `--include-legacy false` leaves it true and `false` becomes a positional argument.
+- **`galtea test-cases update` forks a new revision instead of updating.** Any change to evaluation content (`input`, `expectedOutput`, `context`, `expectedTools`, `scenario`, `userPersona`, `goal`, `stoppingCriterias`, `maxIterations`, `languageCode`) retires the old row and returns a **new id**, so anything holding the old id now points at a superseded row -- compare the returned id to the one you sent to detect it. The new revision also **resets the human annotations** (`userScore`, `userScoreReason`, `reviewedById`), so warn the user before editing a reviewed test case. Annotation-only edits, `variant`, and no-op echoes update in place and fork nothing.
+- **`galtea metrics update` cannot change a judge.** It accepts only `name`, `description`, and `tags`; anything else is refused. A judge prompt, evaluator model, or output schema changes only by creating a revision (`galtea metrics create parentMetricId: <id>`), which flips the parent to legacy.
 - **`galtea sync` is needed after API releases.** If `galtea <noun> <verb>` returns "unknown command" but the docs say it exists, the local spec cache is stale -- run `galtea sync` and retry.
 
 ## Skill Feedback
