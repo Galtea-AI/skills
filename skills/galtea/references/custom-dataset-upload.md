@@ -6,7 +6,7 @@ to generate it. Two paths, and they compose:
 | The user has | Path | Surface |
 |---|---|---|
 | A CSV of rows | Upload the CSV as the dataset file | SDK, dashboard |
-| Documents or images to attach to rows | Presign, PUT the bytes, reference the URI in the row | SDK, or CLI plus `curl` |
+| Documents, images, or text and data files to attach to rows | Presign, PUT the bytes, reference the URI in the row | SDK, or CLI plus `curl` |
 | Both | Upload the files first, then reference them from the CSV | SDK does both in one call |
 
 **Prefer the Python SDK for any upload.** The CLI can mint an upload URL and create a dataset,
@@ -21,9 +21,10 @@ Three reasons to state to a user who is about to write a loop:
 - **There is no empty-dataset mode.** Every dataset creation *without* a file goes down the
   generation branch and calls a generator, which **consumes credits**. You cannot create a bare
   dataset and fill it by hand for free.
-- **A dataset created from a file skips generation entirely.** No credit check, no
+- **A dataset created from a file skips generation entirely.** No generation credit check, no
   `max_test_cases` ceiling, and the dataset is created already `SUCCESS` with every row
-  persisted before the call returns.
+  persisted before the call returns. Skipping generation is not the same as a free import: a
+  `credits_used` column in the CSV is still charged, as the column list below says.
 
 ## The CSV path
 
@@ -68,7 +69,9 @@ Required, and this is the whole list:
 | `SECURITY` (`RED_TEAMING`) | `input` |
 | `BEHAVIOR` (`SCENARIOS`) | `user_persona`, `scenario`, `goal` -- all three |
 
-Optional columns, accepted for **every** type with no per-type gating:
+Every column below is read for **every** type, with no per-type gating. They are optional except
+where the table above makes one required: `user_persona`, `scenario` and `goal` appear here and
+are required for `BEHAVIOR`. The table above decides what a type requires.
 
 `expected_output`, `expected_tools`, `context`, `tag`, `strategy`, `scenario`, `user_persona`,
 `goal`, `archetype`, `spec_relevance`, `initial_prompt`, `stopping_criterias`, `max_iterations`,
@@ -226,7 +229,7 @@ so a bad path costs no transfer. Row errors are prefixed with the row number.
 
 ### Accepted file types
 
-A judge has to be able to read the file, so the extension is checked against a fixed list:
+The platform validates the extension against a fixed list before it accepts the file:
 
 | Group | Extensions |
 |---|---|
@@ -298,6 +301,7 @@ galtea storage generate-put-url --key "rental-contract.pdf" --file-type file
 # 2. PUT the bytes to the uploadPresignedUrl from that response.
 curl -X PUT --upload-file ./rental-contract.pdf \
   -H "Content-Type: application/octet-stream" \
+  -H "x-ms-blob-type: BlockBlob" \
   "<uploadPresignedUrl>"
 ```
 
@@ -315,8 +319,8 @@ Four things to get right here:
 - **Both URLs expire in 24 hours.** An upload URL is a write capability for that object while it
   lives, so treat it as a secret: never echo one into a log, a chat reply, or a bug report.
 
-On Azure storage a presigned PUT also needs `-H "x-ms-blob-type: BlockBlob"`. S3 ignores it, so
-sending it is safe either way.
+The `x-ms-blob-type` header is what Azure storage requires on a presigned PUT. S3 ignores it, so
+the one command above works on either backend.
 
 **The CLI cannot upload a file itself.** Its command tree is generated from the API spec and only
 sends JSON bodies, so `field: @/path/to/file` inlines the file's *text* as a string rather than

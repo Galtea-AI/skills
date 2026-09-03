@@ -270,17 +270,18 @@ they hold:
 | The user has | Path |
 |---|---|
 | A CSV of rows | `galtea.datasets.create(dataset_file_path="./rows.csv")` -- rows are parsed server-side |
-| Documents or images to attach to rows | Upload the bytes, then reference the storage URI in the row's `input` |
+| Documents, images, or text and data files to attach to rows | Upload the bytes, then reference the storage URI in the row's `input` |
 | Both | Add an `input_file_paths` column to the CSV; the SDK uploads each file first |
 
 **Use the Python SDK for any upload.** The CLI mints an upload URL and creates the dataset, but
 it cannot send file bytes -- `field: @/path` inlines the file's text as a string instead of
 uploading it. For a terminal-only flow, `galtea storage generate-put-url` then `curl -X PUT`.
 
-Two things that change what you tell the user, before any command:
+Four things that change what you tell the user, before any command:
 
-- **A dataset created from a file skips generation**, so it costs no credits and ignores
-  `max_test_cases`. There is no empty-dataset mode: creating a dataset *without* a file always
+- **A dataset created from a file skips generation**, so it draws no generation credits and
+  ignores `max_test_cases`. It is not unconditionally free: a `credits_used` column in the CSV is
+  charged on import, see the gotcha below. There is no empty-dataset mode: creating a dataset *without* a file always
   runs a generator and spends credits. And `test-cases create` is one request per row, with no
   batch endpoint.
 - **A judge cannot read an uploaded file.** Every metric that reads the input is **skipped**, not
@@ -316,7 +317,7 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Set up human evaluation | Create UserGroups, assign metrics, reviewers claim + score via platform | `/sdk/tutorials/human-evaluation` |
 | Trace agent internals | Capture internal tool calls / LLM calls as Span records | `/sdk/tutorials/tracing-agent-operations` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
-| Upload a CSV of existing test cases | Create the dataset from a local CSV; rows are parsed server-side and cost no credits | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
+| Upload a CSV of existing test cases | Create the dataset from a local CSV; rows are parsed server-side and draw no generation credits | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
 | Test an AI that reads documents | Upload each file, attach it to a test case input, score the pipeline's output | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
 | Version a test case or a judge | Edit a test case to fork a revision, or create a metric with `parentMetricId`; then replay | Local file, not a docs page: [references/entity-revisions.md](references/entity-revisions.md) |
 
@@ -343,7 +344,7 @@ Runtime behaviors that are not in `--help` text -- these are the only items a we
 - **Datasets must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will be skipped silently. Workflow constraint, not a schema rule.
 - **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, datasets, metrics, endpoint connections, user groups, models, sessions, specifications, evaluations). The body `message` consistently contains the substring `"with the same"` followed by the colliding fields, but the surrounding wording varies per entity. Examples: `"A Product with the same Name already exists."`, `"A Test with the same Name and Type already exists."`, `"An EndpointConnection with the same name already exists for this product."`, `"A Specification with the same description and type already exists for this product."`, `"An Evaluation with the same Version and Test already exists."`, `"A Session with the same customId: '...' already exists for version with ID: '...'."`. Those two messages really do still say `Test` -- the server text was not renamed, so match it as quoted. Match on `"with the same"` (case-insensitive) to distinguish unique-constraint violations from other 400s; do not blind-retry.
 - **Span rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading. Spans are `galtea spans` on the CLI and live at `/traces` on the wire.
-- **Credits are consumed** by evaluations and dataset generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
+- **Credits are consumed** by evaluations, dataset generation, and a `credits_used` column in an uploaded dataset CSV -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
 - **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `{error: string, message: string}`. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
 - **A bad row in an uploaded dataset CSV deletes the dataset, and a missing column returns `500`.** Validation is all-or-nothing: the first bad row stops the whole import, the insert is one transaction, and the dataset row itself is then deleted, so the user is never left with a partial dataset. Which status comes back depends on what is wrong. A **missing required column** is raised as a plain error and lands in the server-error branch, so `Row 3 is missing required fields: input` arrives as a `500` for what is a user error; read `message` rather than judging by the status. An **invalid value** in a row, such as an unrecognised `gender` or `language`, is a normal, correctly coded `400`. The row number counts parsed non-empty rows and excludes the header, so it may not match the file's line number. A header-only CSV does not error; it creates an empty dataset.
 - **The presigned-URL response does not contain `url`.** `galtea storage generate-put-url` returns `{downloadPresignedUrl, uploadPresignedUrl}`, but the operation's OpenAPI description documents `{url}`. The spec is wrong here, so an agent that trusts `--help` reads a field that does not exist. Its `key` argument is the **file name**, not a storage path -- the key is minted server-side under the organization's own folder, and a URI outside that folder is refused at write time. Both URLs expire in 24 hours, and an upload URL is a write capability for that object: never echo one into a log, a reply, or a bug report.
