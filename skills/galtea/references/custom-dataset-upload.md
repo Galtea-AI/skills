@@ -96,16 +96,18 @@ Semantics that are not guessable from the names:
 
 Validation is all-or-nothing at three levels: the required-column check stops at the first bad
 row, per-row value validation stops at the first bad value, and the insert is one transaction.
-**On any failure the dataset row itself is deleted**, so the user is not left with a
-half-populated dataset. Fix the CSV and call again.
+The first two run in memory before the transaction opens. **On any failure the dataset row itself
+is deleted**, so the user is not left with a half-populated dataset. Fix the CSV and call again.
 
 Two things to warn a user about before they read the error:
 
 - **The row number counts parsed non-empty rows, not file lines.** Blank lines are skipped before
   numbering, so `Row 12` may not be line 12 of their file. It also excludes the header.
-- **A CSV mistake comes back as HTTP 500, not 400.** The row-level message is raised as a plain
-  error, so it lands in the server-error branch. Read the `message` field, do not judge by the
-  status code. `Row 3 is missing required fields: input` is a user error wearing a 500.
+- **A missing required column comes back as HTTP 500, not 400.** That message is raised as a
+  plain error, so it lands in the server-error branch: `Row 3 is missing required fields: input`
+  is a user error wearing a 500. Read the `message` field rather than judging by the status.
+  An **invalid value** in a row is different: an unrecognised `gender` or `language` throws a
+  bad-request error and arrives as a normal `400`, so do not report it as a server fault.
 
 A header-only CSV does **not** error. It creates a dataset with zero test cases.
 
@@ -123,6 +125,15 @@ letting a large upload fail late. Numbers published elsewhere in the docs (100 M
 to the knowledge-base file and the behavior data catalog, not to this CSV.
 
 ## Attaching files to a row
+
+> **Check availability before you advise any of this.** Everything from here to the end of the
+> file needs the platform release that added uploaded test case input files, plus a matching SDK.
+> On an older deployment none of it exists and the failures look unrelated: the `file` value of
+> `--file-type` is refused as an invalid file type, `input_file_paths` is an unknown argument, and
+> a test case carries no `input_files`. One call settles it:
+> `galtea storage generate-put-url --key probe.pdf --file-type file`. If that answers `Invalid
+> file type`, the deployment predates the feature. Say so and route the user to the CSV path
+> above instead of working around it.
 
 A test case input can carry uploaded files alongside optional text. Bytes go to object storage
 and the input holds a reference. Audio for voice products already works this way; documents and
