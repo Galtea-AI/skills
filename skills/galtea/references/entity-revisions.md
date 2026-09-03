@@ -16,9 +16,9 @@ common, because the three mechanisms do not share a vocabulary.
 **`Dataset` itself has no revisions.** This is the most common wrong answer. A `Dataset` (the
 `/tests` wire path) carries no lineage and no legacy marker. Its `sourceTestId` records that it
 was copied or extended from another dataset, which is provenance, not versioning. Only the
-individual `TestCase` rows inside it revision. So when a user asks for "dataset versioning",
-the honest answer is: you version each test case, and the dataset is the container those
-revisions live in. Do not claim a dataset can be rolled back to an earlier state.
+individual `TestCase` rows inside it carry revisions. So when a user asks for "dataset
+versioning", the honest answer is: you version each test case, and the dataset is the container
+those revisions live in. Do not claim a dataset can be rolled back to an earlier state.
 
 Nothing else on the platform has revisions. `Product`, `Specification`, `Session`, `Trace`,
 `Span`, and `Evaluation` have none.
@@ -27,7 +27,7 @@ Nothing else on the platform has revisions. `Product`, `Specification`, `Session
 
 No entity carries a revision counter. Nothing answers "which revision is this" or "how many
 exist in this family". You cannot render `revision 3 of 5`, because neither number exists. Order
-within a family is only inferrable from `createdAt` plus walking the parent links one hop at a
+within a family can only be inferred from `createdAt` plus walking the parent links one hop at a
 time. Never invent a revision number in output you show a user.
 
 ## Reading history: expect one hop, not a tree
@@ -141,7 +141,9 @@ revision at all. Route them to the CLI or the dashboard. The SDK can read the li
 
 ### Metric -- a revision is created, not edited
 
-`PATCH /metrics/:id` **never** forks, and it accepts only `name`, `description`, and `tags`.
+`PATCH /metrics/:id` **never** forks, and it accepts only `name`, `description`, `tags`, and
+`userGroupIds`. The refusal message names just the first three, so it reads as if assigning user
+groups were blocked too.
 Anything else is refused. So a judge prompt, an evaluator model, or a scoring schema cannot be
 edited at all -- changing one means creating a revision.
 
