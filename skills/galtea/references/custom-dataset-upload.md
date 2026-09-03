@@ -127,13 +127,23 @@ to the knowledge-base file and the behavior data catalog, not to this CSV.
 ## Attaching files to a row
 
 > **Check availability before you advise any of this.** Everything from here to the end of the
-> file needs the platform release that added uploaded test case input files, plus a matching SDK.
-> On an older deployment none of it exists and the failures look unrelated: the `file` value of
-> `--file-type` is refused as an invalid file type, `input_file_paths` is an unknown argument, and
-> a test case carries no `input_files`. One call settles it:
-> `galtea storage generate-put-url --key probe.pdf --file-type file`. If that answers `Invalid
-> file type`, the deployment predates the feature. Say so and route the user to the CSV path
-> above instead of working around it.
+> file needs two things, and they move independently: the platform release that added uploaded
+> test case input files, and an SDK that can send them. Check both, because a deployment can
+> carry the API half while the installed SDK cannot reach it.
+>
+> ```bash
+> # The API half: an older deployment answers "Invalid file type".
+> galtea storage generate-put-url --key probe.pdf --file-type file
+> # The SDK half: ImportError on a version that predates the feature.
+> python -c "from galtea import InputFile"
+> ```
+>
+> Every snippet below uses the SDK, so the second check is the one that decides whether the
+> examples run. On an older SDK the failure reads like a broken library rather than a version
+> floor: `unexpected keyword argument 'input_file_paths'`, or no `upload_input_file` attribute.
+> On an older deployment the file type is refused and a test case carries no `input_files`.
+> If either check fails, say which half is missing and route the user to the CSV path above
+> instead of working around it.
 
 A test case input can carry uploaded files alongside optional text. Bytes go to object storage
 and the input holds a reference. Audio for voice products already works this way; documents and

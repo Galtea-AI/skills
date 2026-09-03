@@ -291,6 +291,10 @@ Two things that change what you tell the user, before any command:
   `gif`) and text or data (`txt`, `csv`, `md`, `html`, `xml`, `json`, `eml`). **Audio is not on
   it** -- a voice clip is its own part type, not a file. State the list before the user picks a
   file. A test case also caps at 20 files and 20 MB *in total*, not per file.
+- **Attaching files needs a recent platform release and a matching SDK**, and the two move
+  independently. Confirm both before advising any of it:
+  [references/custom-dataset-upload.md](references/custom-dataset-upload.md) opens its attachment
+  section with the two checks and says what each failure looks like.
 
 Full procedure -- required columns per dataset type, the all-or-nothing row validation, the
 limits, the upload envelope, and the terminal path -- in
