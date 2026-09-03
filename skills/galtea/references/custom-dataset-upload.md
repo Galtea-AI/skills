@@ -276,6 +276,38 @@ deterministic metrics (JSON Field Match, JSON Field Match (Normalized), Text Mat
 Similarity, URL Validation, ROUGE, BLEU, METEOR, IOU, Spatial Match, Tool Correctness) or a
 self-hosted metric. Offer those by name instead of suggesting a custom rubric.
 
+## Running your agent on a file-carrying test case
+
+The platform does not run the inference for you, and neither runner delivers the file to the
+agent. Say this before the user wires anything up:
+
+- **An endpoint connection** renders the raw input envelope into the request template. The
+  endpoint receives the stored `s3://` reference, which it cannot fetch, and no download link is
+  ever exposed to the template.
+- **The SDK agent callback** (`evaluations.run` with an `Agent`) gets the text in
+  `message.content` and the file parts under `message.metadata["content"]`, still as stored
+  references. The SDK has no public call that turns one into bytes.
+
+The loop that works today is manual:
+
+```python
+for tc in galtea.test_cases.list(dataset_id=dataset.id):
+    # 1. Mint a link and fetch each file. See "Getting the bytes back" for the CLI form;
+    #    from Python this is a raw request, the SDK does not expose it yet.
+    files = [fetch_bytes(f.uri, f.filename) for f in tc.input_files]
+    # 2. Call the user's own pipeline with the text and the bytes.
+    output = my_agent(text=tc.input, files=files)
+    # 3. Record the run, then evaluate that trace.
+    session = galtea.sessions.create(version_id=version.id, test_case_id=tc.id)
+    galtea.traces.create(session_id=session.id, input=tc.input, output=output)
+    galtea.evaluations.create(session_id=session.id, metrics=[...])
+```
+
+`tc.input` is the envelope object here, not a string, when the row carries a file. Send the
+user's pipeline the text out of `user_message` and the bytes separately. Every metric that
+declares `input` is still skipped on that evaluation; score the output with output-only or
+self-hosted metrics as the section above says.
+
 ## Getting the bytes back
 
 A stored `uri` is a reference, not a link. To read the file, or the dataset CSV itself, ask the
