@@ -196,7 +196,8 @@ no `inputFiles` field at all**, so an agent checking the raw API or the CLI must
 
 **The stored `uri` is not the one you sent.** A freshly minted upload URL carries a signature and
 expires, and the API replaces it with the canonical signature-free `s3://<bucket>/<key>` form when
-the test case is written. Persist that one, and ask the API for a link when you need the bytes.
+the test case is written. Persist that one, and ask the API for a link when you need the bytes
+(see "Getting the bytes back").
 
 **`upload_input_file` is the right call when several test cases share one document.** A common
 shape is one dataset per pipeline stage, all pointing at the same file. `test_cases.create` does
@@ -274,6 +275,34 @@ therefore skipped on a file-carrying input. Output-only scoring means the platfo
 deterministic metrics (JSON Field Match, JSON Field Match (Normalized), Text Match, Text
 Similarity, URL Validation, ROUGE, BLEU, METEOR, IOU, Spatial Match, Tool Correctness) or a
 self-hosted metric. Offer those by name instead of suggesting a custom rubric.
+
+## Getting the bytes back
+
+A stored `uri` is a reference, not a link. To read the file, or the dataset CSV itself, ask the
+API for a download URL and fetch it:
+
+```bash
+# Works for an attached file (input.content[].uri) and for a dataset's own uri alike.
+galtea storage generate-get-url --uri "s3://<bucket>/files/<organizationId>/<id>.pdf"
+curl -sL -o rental-contract.pdf "<downloadPresignedUrl>"
+```
+
+- **The response is `{downloadPresignedUrl}`.** The `--help` and OpenAPI text say `{url}`, the same
+  spec error as the upload call. Do not read `url`.
+- **The link lives 24 hours** and is a read capability for that object: do not paste it into a
+  reply or a log. Store the `uri`, mint a link when you need one.
+- **Another organization's file answers `404 File not found`**, never `403`, so the platform does
+  not confirm the file exists. A platform admin key is exempt and can read any organization's
+  file; do not mistake that for the rule.
+- **The SDK downloads dataset CSVs only.** `galtea.datasets.download(dataset, output_directory)`
+  fetches the dataset's own uploaded file and names it after the storage key, so the saved name is
+  the random `<id>.csv`, not the name the user uploaded. It returns `None` and prints on failure
+  instead of raising, so check the return value. There is no SDK method for an attached file; use
+  the two commands above.
+- **Many files at once:** `POST /storage/generate-get-presigned-urls` with `{"uris": [...]}`
+  returns `{downloadPresignedUrls: {<uri>: <link>}}` and silently omits any uri the caller does
+  not own or that does not exist. It has no CLI verb, so it is a raw call. Compare the keys you
+  get back against the ones you sent before assuming every file resolved.
 
 ## What a file-carrying test case cannot do
 
