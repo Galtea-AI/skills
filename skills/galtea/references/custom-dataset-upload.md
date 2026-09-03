@@ -187,7 +187,13 @@ uploaded = galtea.test_cases.upload_input_file("./rental-contract.pdf")
 ```
 
 Reading back, `test_case.input_files` lists the attached files with their `uri`, `filename`, and
-`mime_type`.
+`mime_type`. That attribute is derived by the SDK from the input itself. **The wire response has
+no `inputFiles` field at all**, so an agent checking the raw API or the CLI must read
+`input.content` instead; reading a missing field and finding nothing looks like a failed upload.
+
+**The stored `uri` is not the one you sent.** A freshly minted upload URL carries a signature and
+expires, and the API replaces it with the canonical signature-free `s3://<bucket>/<key>` form when
+the test case is written. Persist that one, and ask the API for a link when you need the bytes.
 
 **`upload_input_file` is the right call when several test cases share one document.** A common
 shape is one dataset per pipeline stage, all pointing at the same file. `test_cases.create` does

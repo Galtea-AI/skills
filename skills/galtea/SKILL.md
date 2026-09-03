@@ -286,7 +286,7 @@ Two things that change what you tell the user, before any command:
 - **A judge cannot read an uploaded file.** Every metric that reads the input is **skipped**, not
   scored. Say this before the user builds a document dataset, and route them to scoring their
   pipeline's output instead.
-- **File types are a fixed list**, checked before any upload: documents (`pdf`, `docx`, `xlsx`,
+- **File types are a fixed list**, checked by the SDK before it uploads and again by the API when the test case is written: documents (`pdf`, `docx`, `xlsx`,
   `pptx`, `rtf`), images (`png`, `jpg`, `jpeg`, `tiff`, `tif`, `bmp`, `webp`, `heic`, `heif`,
   `gif`) and text or data (`txt`, `csv`, `md`, `html`, `xml`, `json`, `eml`). **Audio is not on
   it** -- a voice clip is its own part type, not a file. State the list before the user picks a
