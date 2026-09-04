@@ -90,7 +90,7 @@ Custom-vs-built-in is orthogonal: users can create custom metrics in any of the 
 
 ## Core Rules
 
-1. **Use the `galtea` CLI for everything that talks to the API.** If `galtea --version` does not return a version, install the binary first (see the CLI Installation section below and [references/cli-install.md](references/cli-install.md)). If `galtea whoami` is not authenticated, run the Authentication flow below before any other call. Never hand-craft `curl -H "Authorization: Bearer ..."` requests when a `galtea` command exists -- the CLI handles auth, retries, output formatting, and follows server-side schema changes via `galtea sync`.
+1. **Use the `galtea` CLI for everything that talks to the API.** If `galtea --version` does not return a version, install the binary first (see the CLI Installation section below and [references/cli-install.md](references/cli-install.md)). If `galtea whoami` is not authenticated, run the Authentication flow below before any other call. Never hand-craft `curl -H "Authorization: Bearer ..."` requests when a `galtea` command exists -- the CLI handles auth, retries, output formatting, and follows server-side schema changes via `galtea sync`. The one exception is moving file bytes, which the CLI cannot do: for uploading or downloading a dataset CSV or an attached file, use the Python SDK (see "Upload a dataset the user already has").
 2. **Documentation first -- never advise from memory.** Galtea ships frequently; commands, metrics, and SDK APIs change. Before you advise on a workflow, concept, or argument shape, fetch the relevant docs page (see "Discover docs and commands" below) and run `galtea <noun> <verb> --help` for the live argument shape. **Prefer the raw Markdown form of docs pages by appending `.md` to the route** (for example, `https://docs.galtea.ai/quickstart.md` or `https://docs.galtea.ai/cli/installation.md`) -- it is the fastest and most reliable way to read complete docs content without losing text to tabs or client-side rendering. Examples inlined here are illustrative, not authoritative.
 3. **Discover commands via `galtea --help`.** `galtea --help` lists every resource (`products`, `evaluations`, `sessions`, ...); `galtea <noun> --help` lists verbs under a resource; `galtea <noun> <verb> --help` shows the example invocation, request schema, and response schema for one operation. After the API ships new endpoints, run `galtea sync` to refresh the local spec cache.
 4. **Argument syntax depends on the HTTP verb.** GET / list operations expose query params as kebab-case `--flag` arguments (e.g. `galtea evaluations list --version-ids v1,v2 --statuses PENDING`). POST / create / update operations take body fields via Restish's inline shorthand (e.g. `galtea evaluations create-from-version versionId: ver_xxx`) or JSON on stdin (e.g. `echo '{"versionId":"v1"}' | galtea evaluations create-from-version`). **Separate two or more body fields with commas** (`name: "x", productId: <id>`); without them the parser swallows every later field into the first field's value and the write fails naming the wrong field, which does not read as a syntax error. The shorthand cannot carry a comma inside a value (`Expected colon but got }`), an array (a repeated field arrives as a string and the server answers `500`), or a nested value: pipe JSON on stdin for those. The `EXAMPLES` block in `--help` shows the right form for each operation. **In non-TTY contexts (scripts, CI, agent harnesses) always redirect stdin on the inline-shorthand form** -- append `</dev/null` (or pipe a JSON body in) -- otherwise the command blocks waiting for stdin even when the inline body is complete. See Gotchas.
@@ -272,11 +272,13 @@ they hold:
 | A CSV of rows | `galtea.datasets.create(dataset_file_path="./rows.csv")` -- rows are parsed server-side |
 | Documents, images, or text and data files to attach to rows | Upload the bytes, then reference the storage URI in the row's `input` |
 | Both | Add an `input_file_paths` column to the CSV; the SDK uploads each file first |
-| A stored `uri` and wants the file | `galtea storage generate-get-url --uri <uri>`, then fetch the `downloadPresignedUrl` |
+| A stored `uri` and wants the file | `galtea.storage.download(input_file)` saves it under its uploaded name; from a terminal, `galtea storage generate-get-url --uri <uri>` then fetch the `downloadPresignedUrl` |
 
-**Use the Python SDK for any upload.** The CLI mints an upload URL and creates the dataset, but
-it cannot send file bytes -- `field: @/path` inlines the file's text as a string instead of
-uploading it. For a terminal-only flow, `galtea storage generate-put-url` then `curl -X PUT`.
+**Use the Python SDK for any upload or download.** It is the one place this skill prefers the
+SDK over the CLI: the CLI mints the URLs and creates the dataset, but it cannot move file bytes --
+`field: @/path` inlines the file's text as a string instead of uploading it. For a terminal-only
+flow, `galtea storage generate-put-url` then `curl -X PUT`, and `generate-get-url` then `curl` to
+read a file back.
 
 Four things that change what you tell the user, before any command:
 
