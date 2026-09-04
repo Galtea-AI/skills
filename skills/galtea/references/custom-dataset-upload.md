@@ -299,14 +299,17 @@ for tc in galtea.test_cases.list(dataset_id=dataset.id):
     output = my_agent(text=tc.input, files=files)
     # 3. Record the run, then evaluate that trace.
     session = galtea.sessions.create(version_id=version.id, test_case_id=tc.id)
-    galtea.traces.create(session_id=session.id, input=tc.input, output=output)
+    galtea.traces.create(session_id=session.id, input=tc.input_data or tc.input, output=output)
     galtea.evaluations.create(session_id=session.id, metrics=[...])
 ```
 
-`tc.input` is the envelope object here, not a string, when the row carries a file. Send the
-user's pipeline the text out of `user_message` and the bytes separately. Every metric that
-declares `input` is still skipped on that evaluation; score the output with output-only or
-self-hosted metrics as the section above says.
+`tc.input` is the `user_message` text as a plain string, and it is `None` when the row carries
+files and no text. The full envelope is `tc.input_data` and the file parts are `tc.input_files`,
+so send your pipeline `tc.input` for the text and the fetched bytes separately. Record the trace
+with `tc.input_data` when the row has one, so the stored run keeps the file reference.
+
+Every metric that declares `input` is still skipped on that evaluation; score the output with
+output-only or self-hosted metrics as the section above says.
 
 ## Getting the bytes back
 
