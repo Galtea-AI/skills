@@ -317,7 +317,7 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Test multi-turn conversations | Simulate user conversations against the agent, then evaluate sessions | `/sdk/tutorials/simulating-conversations` |
 | Evaluate past conversations | Evaluate already-completed multi-turn sessions | `/sdk/tutorials/evaluating-conversations` |
 | Monitor production responses | Log real user queries as traces, evaluate asynchronously | `/sdk/tutorials/monitor-production-responses-to-user-queries` |
-| Set up human evaluation | Create UserGroups, assign metrics, reviewers claim + score via platform | `/sdk/tutorials/human-evaluation` |
+| Set up human evaluation | Create UserGroups, link a Human Evaluation metric, group members score pending evaluations in the dashboard | `/sdk/tutorials/human-evaluation` |
 | Trace agent internals | Capture internal tool calls / LLM calls as Span records | `/sdk/tutorials/tracing-agent-operations` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
 | Upload a CSV of existing test cases | Create the dataset from a local CSV; rows are parsed server-side and draw no generation credits | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
