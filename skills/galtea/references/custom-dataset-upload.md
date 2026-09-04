@@ -288,25 +288,32 @@ agent. Say this before the user wires anything up:
   `message.content` and the file parts under `message.metadata["content"]`, still as stored
   references. Nothing fetches them for you; the callback has to download them itself.
 
-The loop that works today is manual:
+The loop that works today is manual. It is the same one the docs tutorial "Evaluate Document
+Inputs" (`/sdk/tutorials/evaluate-document-inputs`) walks end to end, so fetch that page for the
+full runnable version:
 
 ```python
-for tc in galtea.test_cases.list(dataset_id=dataset.id):
-    # 1. Fetch each attached file. On an older SDK this is a raw request instead,
-    #    see "Getting the bytes back".
+# include_legacy=False, or an edited test case comes back once per revision and you
+# download the same document again for each one.
+for tc in galtea.test_cases.list(dataset_id=dataset.id, include_legacy=False):
+    # 1. Fetch each attached file, saved under its uploaded name. On an older SDK this
+    #    is a raw request instead, see "Getting the bytes back".
     paths = [galtea.storage.download(f, output_directory=workdir) for f in tc.input_files]
-    # 2. Call the user's own pipeline with the text and the bytes.
-    output = my_agent(text=tc.input, files=paths)
-    # 3. Record the run, then evaluate that trace.
+    # 2. Call the user's own pipeline with the text and the local files.
+    answer = my_agent(question=tc.input, document_paths=paths)
+    # 3. Record the answer against the test case and score it in one call.
     session = galtea.sessions.create(version_id=version.id, test_case_id=tc.id)
-    galtea.traces.create(session_id=session.id, input=tc.input_data or tc.input, output=output)
-    galtea.evaluations.create(session_id=session.id, metrics=[...])
+    galtea.traces.create_and_evaluate(
+        session_id=session.id, output=answer, metrics=[{"name": "JSON Field Match"}]
+    )
 ```
 
 `tc.input` is the `user_message` text as a plain string, and it is `None` when the row carries
 files and no text. The full envelope is `tc.input_data` and the file parts are `tc.input_files`,
-so send your pipeline `tc.input` for the text and the fetched bytes separately. Record the trace
-with `tc.input_data` when the row has one, so the stored run keeps the file reference.
+so send your pipeline `tc.input` for the text and the fetched files separately. The trace needs
+no `input`: the session is linked to the test case, and the evaluation reads the input, file
+parts included, from there. Wrap the download in `try`/`except` if one unreadable document
+should not stop the rest.
 
 Every metric that declares `input` is still skipped on that evaluation; score the output with
 output-only or self-hosted metrics as the section above says.
@@ -324,12 +331,16 @@ uri = galtea.storage.upload("./rental-contract.pdf")
 
 **`galtea.storage` is public only on a newer SDK**, where both methods arrive together. On an
 older one the service exists but is private, so `hasattr(galtea, "storage")` is the probe, and
-the two commands below are the fallback.
+the two commands below are the fallback. The SDK reference for both methods is
+`/sdk/api/storage/service` on the docs site, with `/sdk/api/storage/download` and
+`/sdk/api/storage/upload` underneath.
 
 `download` saves under the `InputFile`'s `filename`, or under `filename=` when you pass one, and
-otherwise under the random storage id. It raises rather than returning `None`: `ValueError` for a
-missing uri or a local path, and a plain exception for a refused uri or a failed transfer. The
-error never contains the presigned URL.
+otherwise under the random storage id. It raises rather than returning `None`: `ValueError` when
+no uri was given or the value names a file on this machine (the mistake of passing `download` the
+path meant for `upload`), and a plain exception for a refused uri or a failed transfer. The error
+never contains the presigned URL. A fresh uri straight from an upload still carries its signature;
+`download` strips it before asking for a link, so both forms name the same object.
 
 Without that SDK, or from a terminal, ask the API for a link and fetch it:
 
