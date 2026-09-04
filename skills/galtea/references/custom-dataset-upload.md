@@ -286,17 +286,17 @@ agent. Say this before the user wires anything up:
   ever exposed to the template.
 - **The SDK agent callback** (`evaluations.run` with an `Agent`) gets the text in
   `message.content` and the file parts under `message.metadata["content"]`, still as stored
-  references. The SDK has no public call that turns one into bytes.
+  references. Nothing fetches them for you; the callback has to download them itself.
 
 The loop that works today is manual:
 
 ```python
 for tc in galtea.test_cases.list(dataset_id=dataset.id):
-    # 1. Mint a link and fetch each file. See "Getting the bytes back" for the CLI form;
-    #    from Python this is a raw request, the SDK does not expose it yet.
-    files = [fetch_bytes(f.uri, f.filename) for f in tc.input_files]
+    # 1. Fetch each attached file. On an older SDK this is a raw request instead,
+    #    see "Getting the bytes back".
+    paths = [galtea.storage.download(f, output_directory=workdir) for f in tc.input_files]
     # 2. Call the user's own pipeline with the text and the bytes.
-    output = my_agent(text=tc.input, files=files)
+    output = my_agent(text=tc.input, files=paths)
     # 3. Record the run, then evaluate that trace.
     session = galtea.sessions.create(version_id=version.id, test_case_id=tc.id)
     galtea.traces.create(session_id=session.id, input=tc.input_data or tc.input, output=output)
@@ -313,8 +313,25 @@ output-only or self-hosted metrics as the section above says.
 
 ## Getting the bytes back
 
-A stored `uri` is a reference, not a link. To read the file, or the dataset CSV itself, ask the
-API for a download URL and fetch it:
+A stored `uri` is a reference, not a link. From the SDK, one call saves the file:
+
+```python
+# Takes an InputFile straight from a test case, or any uri this organization uploaded.
+path = galtea.storage.download(test_case.input_files[0], output_directory="./docs")
+# The upload side is public too: returns the stored uri.
+uri = galtea.storage.upload("./rental-contract.pdf")
+```
+
+**`galtea.storage` is public only on a newer SDK**, where both methods arrive together. On an
+older one the service exists but is private, so `hasattr(galtea, "storage")` is the probe, and
+the two commands below are the fallback.
+
+`download` saves under the `InputFile`'s `filename`, or under `filename=` when you pass one, and
+otherwise under the random storage id. It raises rather than returning `None`: `ValueError` for a
+missing uri or a local path, and a plain exception for a refused uri or a failed transfer. The
+error never contains the presigned URL.
+
+Without that SDK, or from a terminal, ask the API for a link and fetch it:
 
 ```bash
 # Works for an attached file (input.content[].uri) and for a dataset's own uri alike.
@@ -329,11 +346,10 @@ curl -sL -o rental-contract.pdf "<downloadPresignedUrl>"
 - **Another organization's file answers `404 File not found`**, never `403`, so the platform does
   not confirm the file exists. A platform admin key is exempt and can read any organization's
   file; do not mistake that for the rule.
-- **The SDK downloads dataset CSVs only.** `galtea.datasets.download(dataset, output_directory)`
-  fetches the dataset's own uploaded file and names it after the storage key, so the saved name is
-  the random `<id>.csv`, not the name the user uploaded. It returns `None` and prints on failure
-  instead of raising, so check the return value. There is no SDK method for an attached file; use
-  the two commands above.
+- **`galtea.datasets.download(dataset, output_directory)`** fetches a dataset's own uploaded CSV
+  and saves it under the random storage id, not the name the user uploaded. On a newer SDK it
+  shares the code path above and raises on failure; on an older one it prints and returns `None`,
+  so check the return value when you cannot rely on the version.
 - **Many files at once:** `POST /storage/generate-get-presigned-urls` with `{"uris": [...]}`
   returns `{downloadPresignedUrls: {<uri>: <link>}}` and silently omits any uri the caller does
   not own or that does not exist. It has no CLI verb, so it is a raw call. Compare the keys you
