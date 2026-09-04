@@ -90,7 +90,7 @@ Custom-vs-built-in is orthogonal: users can create custom metrics in any of the 
 
 ## Core Rules
 
-1. **Use the `galtea` CLI for everything that talks to the API.** If `galtea --version` does not return a version, install the binary first (see the CLI Installation section below and [references/cli-install.md](references/cli-install.md)). If `galtea whoami` is not authenticated, run the Authentication flow below before any other call. Never hand-craft `curl -H "Authorization: Bearer ..."` requests when a `galtea` command exists -- the CLI handles auth, retries, output formatting, and follows server-side schema changes via `galtea sync`.
+1. **Use the `galtea` CLI for everything that talks to the API.** If `galtea --version` does not return a version, install the binary first (see the CLI Installation section below and [references/cli-install.md](references/cli-install.md)). If `galtea whoami` is not authenticated, run the Authentication flow below before any other call. Never hand-craft `curl -H "Authorization: Bearer ..."` requests when a `galtea` command exists -- the CLI handles auth, retries, output formatting, and follows server-side schema changes via `galtea sync`. The one exception is moving file bytes, which the CLI cannot do: for uploading or downloading a dataset CSV or an attached file, use the Python SDK (see "Upload a dataset the user already has").
 2. **Documentation first -- never advise from memory.** Galtea ships frequently; commands, metrics, and SDK APIs change. Before you advise on a workflow, concept, or argument shape, fetch the relevant docs page (see "Discover docs and commands" below) and run `galtea <noun> <verb> --help` for the live argument shape. **Prefer the raw Markdown form of docs pages by appending `.md` to the route** (for example, `https://docs.galtea.ai/quickstart.md` or `https://docs.galtea.ai/cli/installation.md`) -- it is the fastest and most reliable way to read complete docs content without losing text to tabs or client-side rendering. Examples inlined here are illustrative, not authoritative.
 3. **Discover commands via `galtea --help`.** `galtea --help` lists every resource (`products`, `evaluations`, `sessions`, ...); `galtea <noun> --help` lists verbs under a resource; `galtea <noun> <verb> --help` shows the example invocation, request schema, and response schema for one operation. After the API ships new endpoints, run `galtea sync` to refresh the local spec cache.
 4. **Argument syntax depends on the HTTP verb.** GET / list operations expose query params as kebab-case `--flag` arguments (e.g. `galtea evaluations list --version-ids v1,v2 --statuses PENDING`). POST / create / update operations take body fields via Restish's inline shorthand (e.g. `galtea evaluations create-from-version versionId: ver_xxx`) or JSON on stdin (e.g. `echo '{"versionId":"v1"}' | galtea evaluations create-from-version`). **Separate two or more body fields with commas** (`name: "x", productId: <id>`); without them the parser swallows every later field into the first field's value and the write fails naming the wrong field, which does not read as a syntax error. The shorthand cannot carry a comma inside a value (`Expected colon but got }`), an array (a repeated field arrives as a string and the server answers `500`), or a nested value: pipe JSON on stdin for those. The `EXAMPLES` block in `--help` shows the right form for each operation. **In non-TTY contexts (scripts, CI, agent harnesses) always redirect stdin on the inline-shorthand form** -- append `</dev/null` (or pipe a JSON body in) -- otherwise the command blocks waiting for stdin even when the inline body is complete. See Gotchas.
@@ -262,6 +262,48 @@ The four create paths split into two groups by response shape:
 
 In both groups, individual evaluations start at `status: PENDING` and reach `SUCCESS` / `FAILED` / `SKIPPED` / `PENDING_HUMAN` as workers process them. Prefer `galtea evaluations list --ids …` (or `--version-ids` / `--session-ids` if the scope already filters them) over a per-id loop with `evaluations get`; the batch call traffics one HTTP request per poll cycle regardless of how many evaluations you queued. Treat `PENDING_HUMAN` as terminal for polling -- it waits for a human reviewer.
 
+## Upload a dataset the user already has
+
+When the user already has the test content, upload it instead of generating it. Route by what
+they hold:
+
+| The user has | Path |
+|---|---|
+| A CSV of rows | `galtea.datasets.create(dataset_file_path="./rows.csv")` -- rows are parsed server-side |
+| Documents, images, or text and data files to attach to rows | Upload the bytes, then reference the storage URI in the row's `input` |
+| Both | Add an `input_file_paths` column to the CSV; the SDK uploads each file first |
+| A stored `uri` and wants the file | `galtea.storage.download(input_file)` saves it under its uploaded name; from a terminal, `galtea storage generate-get-url --uri <uri>` then fetch the `downloadPresignedUrl` |
+
+**Use the Python SDK for any upload or download.** It is the one place this skill prefers the
+SDK over the CLI: the CLI mints the URLs and creates the dataset, but it cannot move file bytes --
+`field: @/path` inlines the file's text as a string instead of uploading it. For a terminal-only
+flow, `galtea storage generate-put-url` then `curl -X PUT`, and `generate-get-url` then `curl` to
+read a file back.
+
+Four things that change what you tell the user, before any command:
+
+- **A dataset created from a file skips generation**, so it draws no generation credits and
+  ignores `max_test_cases`. It is not unconditionally free: a `credits_used` column in the CSV is
+  charged on import, see the gotcha below. There is no empty-dataset mode: creating a dataset *without* a file always
+  runs a generator and spends credits. And `test-cases create` is one request per row, with no
+  batch endpoint.
+- **A judge cannot read an uploaded file.** Every metric that reads the input is **skipped**, not
+  scored. Say this before the user builds a document dataset, and route them to scoring their
+  pipeline's output instead.
+- **File types are a fixed list**, checked by the SDK before it uploads and again by the API when the test case is written: documents (`pdf`, `docx`, `xlsx`,
+  `pptx`, `rtf`), images (`png`, `jpg`, `jpeg`, `tiff`, `tif`, `bmp`, `webp`, `heic`, `heif`,
+  `gif`) and text or data (`txt`, `csv`, `md`, `html`, `xml`, `json`, `eml`). **Audio is not on
+  it** -- a voice clip is its own part type, not a file. State the list before the user picks a
+  file. A test case also caps at 20 files and 20 MB *in total*, not per file.
+- **Attaching files needs a recent platform release and a matching SDK**, and the two move
+  independently. Confirm both before advising any of it:
+  [references/custom-dataset-upload.md](references/custom-dataset-upload.md) opens its attachment
+  section with the two checks and says what each failure looks like.
+
+Full procedure -- required columns per dataset type, the all-or-nothing row validation, the
+limits, the upload envelope, and the terminal path -- in
+[references/custom-dataset-upload.md](references/custom-dataset-upload.md).
+
 ## Common Workflows
 
 Each workflow below maps to a docs page. Fetch the page via `llms.txt` before advising -- the skill provides routing, not the full procedure.
@@ -275,9 +317,11 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | Test multi-turn conversations | Simulate user conversations against the agent, then evaluate sessions | `/sdk/tutorials/simulating-conversations` |
 | Evaluate past conversations | Evaluate already-completed multi-turn sessions | `/sdk/tutorials/evaluating-conversations` |
 | Monitor production responses | Log real user queries as traces, evaluate asynchronously | `/sdk/tutorials/monitor-production-responses-to-user-queries` |
-| Set up human evaluation | Create UserGroups, assign metrics, reviewers claim + score via platform | `/sdk/tutorials/human-evaluation` |
+| Set up human evaluation | Create UserGroups, link a Human Evaluation metric, group members score pending evaluations in the dashboard | `/sdk/tutorials/human-evaluation` |
 | Trace agent internals | Capture internal tool calls / LLM calls as Span records | `/sdk/tutorials/tracing-agent-operations` |
 | Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
+| Upload a CSV of existing test cases | Create the dataset from a local CSV; rows are parsed server-side and draw no generation credits | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
+| Test an AI that reads documents | Upload each file, attach it to a test case input, score the pipeline's output | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
 | Version a test case or a judge | Edit a test case to fork a revision, or create a metric with `parentMetricId`; then replay | Local file, not a docs page: [references/entity-revisions.md](references/entity-revisions.md) |
 
 For other workflows (custom datasets, judge prompts, agentic evaluation, custom metrics, platform-only inferences, Langfuse integration, model tracking), grep `llms.txt` for the relevant tutorial.
@@ -303,8 +347,11 @@ Runtime behaviors that are not in `--help` text -- these are the only items a we
 - **Datasets must be `status: SUCCESS`** before an evaluation can run against them. `PENDING` / `AUGMENTING` will be skipped silently. Workflow constraint, not a schema rule.
 - **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, datasets, metrics, endpoint connections, user groups, models, sessions, specifications, evaluations). The body `message` consistently contains the substring `"with the same"` followed by the colliding fields, but the surrounding wording varies per entity. Examples: `"A Product with the same Name already exists."`, `"A Test with the same Name and Type already exists."`, `"An EndpointConnection with the same name already exists for this product."`, `"A Specification with the same description and type already exists for this product."`, `"An Evaluation with the same Version and Test already exists."`, `"A Session with the same customId: '...' already exists for version with ID: '...'."`. Those two messages really do still say `Test` -- the server text was not renamed, so match it as quoted. Match on `"with the same"` (case-insensitive) to distinguish unique-constraint violations from other 400s; do not blind-retry.
 - **Span rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading. Spans are `galtea spans` on the CLI and live at `/traces` on the wire.
-- **Credits are consumed** by evaluations and dataset generation only -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
+- **Credits are consumed** by evaluations, dataset generation, and a `credits_used` column in an uploaded dataset CSV -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>` for `totalCredits` / `usedCredits` / `remainingCredits`. When an org runs out, operations fail with a `message` in the body; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
 - **Error response shape is stable; coverage in OpenAPI is not.** All error responses conform to `{error: string, message: string}`. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
+- **A bad row in an uploaded dataset CSV deletes the dataset, and a missing column returns `500`.** Validation is all-or-nothing: the first bad row stops the whole import, the insert is one transaction, and the dataset row itself is then deleted, so the user is never left with a partial dataset. Which status comes back depends on what is wrong. A **missing required column** is raised as a plain error and lands in the server-error branch, so `Row 3 is missing required fields: input` arrives as a `500` for what is a user error; read `message` rather than judging by the status. An **invalid value** in a row, such as an unrecognised `gender` or `language`, is a normal, correctly coded `400`. The row number counts parsed non-empty rows and excludes the header, so it may not match the file's line number. A header-only CSV does not error; it creates an empty dataset.
+- **Neither presigned-URL response contains `url`.** `galtea storage generate-put-url` returns `{downloadPresignedUrl, uploadPresignedUrl}` and `galtea storage generate-get-url --uri <storedUri>` returns `{downloadPresignedUrl}`, but both operations' OpenAPI descriptions document `{url}`. The spec is wrong here, so an agent that trusts `--help` reads a field that does not exist. Its `key` argument is the **file name**, not a storage path -- the key is minted server-side under the organization's own folder, and a URI outside that folder is refused at write time. Both URLs expire in 24 hours, and an upload URL is a write capability for that object: never echo one into a log, a reply, or a bug report.
+- **`credits_used` in a dataset CSV is charged to the organization.** It is an accepted column, so a value copied out of an export spends real credits on import. Drop the column unless the user means it. In the same file, `tag` sets the test case's variant while a column named `variant` is silently ignored.
 - **`--include-legacy` is on by default, so lists mix revisions together.** Both `galtea test-cases list` and `galtea metrics list` return superseded revisions unless you turn the flag off, so a bare list shows rows the user thinks they replaced and any count overstates what is actually live. Pass it off whenever you report a count or show current state. To turn a boolean flag off use the `=` form -- `--include-legacy=false`; `--include-legacy false` leaves it true and `false` becomes a positional argument. The metric parameter is documented as "include legacy/deprecated metrics" and names no default, so do not tell a user Galtea deprecated their metric when their own revision superseded it.
 - **`galtea test-cases update` forks a new revision instead of updating.** Any change to evaluation content (`input`, `expectedOutput`, `context`, `expectedTools`, `scenario`, `userPersona`, `goal`, `stoppingCriterias`, `maxIterations`, `languageCode`, `gender`) retires the old row and returns a **new id**, so anything holding the old id now points at a superseded row -- compare the returned id to the one you sent to detect it. The new revision also **resets the human annotations** (`userScore`, `userScoreReason`, `reviewedById`), so warn the user before editing a reviewed test case. Annotation-only edits, `variant`, and no-op echoes update in place and fork nothing.
 - **`galtea metrics update` cannot change a judge.** It accepts only `name`, `description`, `tags`, and `userGroupIds`; anything else is refused. The refusal message names just the first three, so it reads as if assigning user groups were blocked too. A judge prompt, evaluator model, or output schema changes only by creating a revision (`galtea metrics create parentMetricId: <id>`), which flips the parent to legacy.
