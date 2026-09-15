@@ -60,7 +60,7 @@ You need a Galtea account and an API key:
 export GALTEA_API_KEY=gsk_...
 ```
 
-API keys are found in the Galtea dashboard under **Settings → API Keys**. Each account has a single key; regenerating permanently replaces it.
+API keys are found in the Galtea dashboard under **Settings → API Keys**. An account has one key by default, and regenerating it permanently replaces it. Enterprise plans can hold several named tokens.
 
 ## Usage
 

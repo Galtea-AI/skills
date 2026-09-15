@@ -49,8 +49,10 @@ done
 
 # Final snapshot: every evaluation for this version with its terminal status.
 # (PENDING_HUMAN entries stay listed -- they're terminal for polling, awaiting a human reviewer.)
+# `reason` is the judge's scoring note; `error` is why a FAILED or SKIPPED one ended there,
+# credit exhaustion included, and `canRetry` says whether `evaluations retry` will take it.
 galtea evaluations list --version-ids <versionId> -o json \
-  | jq '.[] | {id, metricId, status, score, reason}'
+  | jq '.[] | {id, metricId, status, score, reason, error, canRetry}'
 ```
 
 The body takes `versionId` **or** `productId`, plus optional `specificationIds`. With `productId` alone the platform clones the product's latest properly configured version and runs against the clone, which needs permission to create versions (a `403` otherwise); the `202` names the clone in `versionId`. For these body fields the CLI uses Restish's inline shorthand: `key: value` pairs, comma-separated, with arrays in `[a, b, c]` form. To pass multiple specifications:

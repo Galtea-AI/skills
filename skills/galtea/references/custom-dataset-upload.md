@@ -109,15 +109,19 @@ is deleted**, so the user is not left with a half-populated dataset. Fix the CSV
 
 Two things to warn a user about before they read the error:
 
-- **The row number counts parsed non-empty rows, not file lines.** Blank lines are skipped before
-  numbering, so `Row 12` may not be line 12 of their file. It also excludes the header.
 - **A missing required column comes back as a bare HTTP 500, not 400.** That message is raised
   as a plain error, so it lands in the server-error branch, and since release 5.3.0 the 500 body
   carries only `Something went wrong`: the row text (`Row 3 is missing required fields: input`)
-  exists only in the API log. So an unexplained 500 on a dataset upload means a missing required
-  column. Check the CSV header first, and do not report it as a platform fault. An **invalid
-  value** in a row is different: an unrecognised `gender` or `language` throws a bad-request
-  error and arrives as a normal `400` whose `message` names the row.
+  exists only in the API log. Every other server fault on this route answers with that same
+  body, so the header is the first thing to check, not the proven cause. When the header holds
+  every required column, treat the 500 as a real platform error and report it.
+- **The row number in that log line counts parsed non-empty rows, not file lines.** Blank lines
+  are skipped before numbering, so `Row 12` may not be line 12 of their file. It also excludes
+  the header.
+- **An invalid value in a row is a normal `400`, and it names the value, not the row.** An
+  unrecognised `gender` or `language` throws a bad-request error from a loop that carries no
+  index, so the body reads `gender must be one of MALE, FEMALE, got "m"`. Do not send the user
+  looking for a row number that the server never sent.
 
 A header-only CSV does **not** error. It creates a dataset with zero test cases.
 
@@ -400,9 +404,10 @@ galtea.evaluations.run(version_id=version.id, agent=my_agent)
 - **Only the `AgentInput` signature (or an `Agent` subclass) receives files.** A `(str)` or
   `(list[dict])` agent carries text only. With text beside the files the SDK **warns once per
   agent** and runs it on the text. With files and no text it raises `FileOnlyTextAgentException`
-  before calling the agent, marks that trace `FAILED` with a message naming the fix, and
-  `evaluations.run` / `simulator.simulate` continue with the next test case (`traces.generate`
-  re-raises it to the caller). A silent empty input is never delivered.
+  before calling the agent, marks that trace `FAILED` with a message naming the fix, and each
+  runner then stops differently: `evaluations.run` continues with the next test case,
+  `simulator.simulate` ends that conversation with a stopping reason, and `traces.generate`
+  re-raises to the caller. A silent empty input is never delivered.
 - `input_data.input_files` is the last user message's files, which is the current turn during a
   run. Each `ConversationMessage` keeps its own `input_files`, so an earlier turn's document
   stays reachable through `messages`. `ConversationMessage.metadata` is unchanged, so a voice
