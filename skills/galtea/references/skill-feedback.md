@@ -28,7 +28,7 @@ Format the body as markdown using the two labels above as `##` headings.
 
 ## 3. Submit
 
-Create a GitHub Issue on the `Galtea-AI/skills` repository. Per the Galtea monorepo convention (see `CLAUDE.md`), every AI-created issue gets the `waiting-for-human-check` label and is **left unassigned** so the team can triage it.
+Create a GitHub Issue on the `Galtea-AI/skills` repository. Every AI-created issue gets the `waiting-for-human-check` label, so a human reviews it before anyone acts on it, and is **left unassigned** so the team can triage it.
 
 ```bash
 gh api repos/Galtea-AI/skills/issues \

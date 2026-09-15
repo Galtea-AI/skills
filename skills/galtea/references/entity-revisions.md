@@ -32,12 +32,17 @@ time. Never invent a revision number in output you show a user.
 
 ## Reading history: expect one hop, not a tree
 
-**No endpoint returns an entity's revision history.** There is no `GET /<entity>/:id/revisions`,
-no ancestor query, and no filter on the family key -- `GET /metrics` accepts no `metricGroupIds`
-and `GET /testCases` accepts no `testCaseGroupIds`. The family keys are labels you can read off a
-row, with no matching lookup to search by.
+**No endpoint returns an entity's revision history.** There is no `GET /<entity>/:id/revisions`
+and no ancestor query. Metrics have a family filter, test cases do not: `GET /metrics` accepts
+`metricGroupIds` and returns every revision of a family in one call, while `GET /testCases`
+accepts no `testCaseGroupIds`, so that key is a label you can read off a row but not search by.
 
-So to reconstruct a family you must list broadly and group client-side:
+```bash
+# Every revision of one metric family, legacy ones included.
+galtea metrics list --metric-group-ids <metricGroupId>
+```
+
+To reconstruct a test case family you must list broadly and group client-side:
 
 ```bash
 # Every revision of every test case in one dataset, then group by testCaseGroupId yourself.
@@ -66,8 +71,8 @@ overstates the dataset size. The same is true of a metric list. Whenever you rep
 show the user "what is in here now", pass the flag off.
 
 **To turn a boolean flag off you must use the `=` form.** Write `--include-legacy=false`, never
-`--include-legacy false` -- these are bare flags, so the space form leaves the flag true and
-`false` is parsed as a positional argument.
+`--include-legacy false` -- these are bare flags, so the space form makes `false` a positional
+argument, and a list command takes none: it fails with `accepts 0 arg(s), received 1`.
 
 **Do not combine `--include-legacy=false` with `--ids`.** The server compares the rows it
 returns against the ids you asked for, so an id the flag legitimately excluded comes back as
@@ -79,8 +84,9 @@ relation instead (`--names`, `--product-ids`, `--test-ids`) whenever you turn th
 swallows every later field into the first field's string value and the write fails naming the
 wrong field (`"name" is required`), so the mistake does not look like a syntax error. A
 single-field body is safe either way. A value that itself contains a comma, such as a judge
-prompt, and any array field such as `evaluationParams`, cannot go through the shorthand at all:
-pipe the body as JSON on stdin.
+prompt, cannot go through the shorthand at all: pipe the body as JSON on stdin. An array can, in
+the bracket form the `--help` examples use (`evaluationParams: [input, actual_output]`); a
+repeated `field:` does not make an array.
 
 The test-case parameter is documented as "include superseded revisions", but the metric one is
 documented as "include legacy/deprecated metrics" and states no default. That wording invites two
@@ -129,7 +135,8 @@ Two consequences worth stating to a user:
   the id in the response to the one you sent to detect that a fork happened.
 - **Human annotations do not carry over.** The new revision resets `userScore`,
   `userScoreReason`, and `reviewedById`, because those scores were given to the old content. A
-  user who has spent review effort on a test case loses it on a content edit. Say so first.
+  user who has spent review effort on a test case loses it on a content edit. Say so first. The
+  revision also resets `creditsUsed` and clears `seedSessionId`.
 
 A family always has exactly one active revision. Only a row that is neither legacy nor deleted
 can be edited; editing a superseded revision is refused.

@@ -89,8 +89,13 @@ Semantics that are not guessable from the names:
 - `expected_tools` and `stopping_criterias` hold several values, split on `;` or `|`.
 - `input` and `context` accept a JSON object in the cell and it is stored as sent. This is how a
   row carries attached files.
-- `filename` sets the source-file label; `confidence_score` is a synonym of `confidence`.
-- `gender` must be `MALE` or `FEMALE`, case-insensitive.
+- `filename` sets the source-file label; `confidence_score` is a fallback for `confidence`.
+- `gender` must be `MALE` or `FEMALE`, case-insensitive. `language` is validated against a list
+  and capped at 35 characters; every other column is unbounded text.
+- **`initial_prompt` does not satisfy the `input` requirement.** The mapper falls back to it
+  when `input` is empty, but the required-column check reads `input` only, so a CSV whose
+  question column is named `initial_prompt` fails on an `ACCURACY` or `SECURITY` dataset.
+  Rename the column to `input`.
 - Only `input` is required for accuracy datasets. `expected_output` is optional, even though a
   golden answer is what makes the dataset useful -- so ask for it rather than assuming the
   platform will.
@@ -104,13 +109,19 @@ is deleted**, so the user is not left with a half-populated dataset. Fix the CSV
 
 Two things to warn a user about before they read the error:
 
-- **The row number counts parsed non-empty rows, not file lines.** Blank lines are skipped before
-  numbering, so `Row 12` may not be line 12 of their file. It also excludes the header.
-- **A missing required column comes back as HTTP 500, not 400.** That message is raised as a
-  plain error, so it lands in the server-error branch: `Row 3 is missing required fields: input`
-  is a user error wearing a 500. Read the `message` field rather than judging by the status.
-  An **invalid value** in a row is different: an unrecognised `gender` or `language` throws a
-  bad-request error and arrives as a normal `400`, so do not report it as a server fault.
+- **A missing required column comes back as a bare HTTP 500, not 400.** That message is raised
+  as a plain error, so it lands in the server-error branch, and since release 5.3.0 the 500 body
+  carries only `Something went wrong`: the row text (`Row 3 is missing required fields: input`)
+  exists only in the API log. Every other server fault on this route answers with that same
+  body, so the header is the first thing to check, not the proven cause. When the header holds
+  every required column, treat the 500 as a real platform error and report it.
+- **The row number in that log line counts parsed non-empty rows, not file lines.** Blank lines
+  are skipped before numbering, so `Row 12` may not be line 12 of their file. It also excludes
+  the header.
+- **An invalid value in a row is a normal `400`, and it names the value, not the row.** An
+  unrecognised `gender` or `language` throws a bad-request error from a loop that carries no
+  index, so the body reads `gender must be one of MALE, FEMALE, got "m"`. Do not send the user
+  looking for a row number that the server never sent.
 
 A header-only CSV does **not** error. It creates a dataset with zero test cases.
 
@@ -129,24 +140,24 @@ to the knowledge-base file and the behavior data catalog, not to this CSV.
 
 ## Attaching files to a row
 
-> **Check availability before you advise any of this.** Everything from here to the end of the
-> file needs two things, and they move independently: the platform release that added uploaded
-> test case input files, and an SDK that can send them. Check both, because a deployment can
-> carry the API half while the installed SDK cannot reach it.
+> **Galtea Cloud has the whole feature since release 5.3.0 (2026-09-14), and the matching SDK is
+> `galtea>=5.3.0` on PyPI.** Everything from here to the end of the file works on production
+> with that pair. Two things still decide whether a snippet runs:
 >
-> ```bash
-> # The API half: an older deployment answers "Invalid file type".
-> galtea storage generate-put-url --key probe.pdf --file-type file
-> # The SDK half: ImportError on a version that predates the feature.
-> python -c "from galtea import InputFile"
-> ```
+> - **The installed SDK.** `pip show galtea` must say `5.3.0` or later. `5.2.0` can upload,
+>   attach and download, but its agent callback never sees a file and it has no
+>   `galtea.storage.read`. On an SDK older than 5.2.0 the failure reads like a broken library
+>   rather than a version floor: `unexpected keyword argument 'input_file_paths'`, no
+>   `upload_input_file` attribute, or `ImportError` on `from galtea import InputFile`. Upgrade
+>   instead of working around it.
+> - **A self-hosted or on-premise deployment**, which can lag the release. `galtea build-info`
+>   returns the deployed `version`; attachments need 5.2.0 and delivery to the endpoint or the
+>   callback needs 5.3.0. It is restricted to admins and enterprise organizations, so when it
+>   answers 403 fall back to the probe `galtea storage generate-put-url --key probe.pdf
+>   --file-type file`, which answers `Invalid file type` on a deployment older than 5.2.0. That
+>   probe cannot tell 5.2 from 5.3.
 >
-> Every snippet below uses the SDK, so the second check is the one that decides whether the
-> examples run. On an older SDK the failure reads like a broken library rather than a version
-> floor: `unexpected keyword argument 'input_file_paths'`, or no `upload_input_file` attribute.
-> On an older deployment the file type is refused and a test case carries no `input_files`.
-> If either check fails, say which half is missing and route the user to the CSV path above
-> instead of working around it.
+> If the deployment fails that probe, say so and route the user to the CSV path above.
 
 A test case input can carry uploaded files alongside optional text. Bytes go to object storage
 and the input holds a reference. Audio for voice products already works this way; documents and
@@ -170,10 +181,14 @@ The `input` cell holds a JSON object with a `content` array. Text is optional an
 }
 ```
 
-`uri` is the only required field on a part. `filename` and `mimeType` are optional and the
-platform fills them in from the stored object when it can, but send them -- they are what the
-user sees, and auto-fill does not work on every storage backend. A file-only test case is valid:
-omit `user_message` and send only `content`.
+`type: "file"` and `uri` are the two required fields on a part. **A part with no `type` is
+silently ignored**: the API stops treating the array as content parts, so nothing is validated
+or canonicalised, and `input_files` never lists the file. `filename` and `mimeType` are
+optional, but send both. The auto-fill is weak: Galtea Cloud recovers the uploaded `filename`
+(a self-hosted Azure Blob deployment cannot), and `mimeType` is read from the stored object,
+which a presigned upload leaves as `application/octet-stream`. A `sizeBytes` field comes back
+on every stored file part, measured from the object; a value you send for it is ignored. A
+file-only test case is valid: omit `user_message` and send only `content`.
 
 ### The SDK does the upload for you
 
@@ -201,7 +216,7 @@ the test case is written. Persist that one, and ask the API for a link when you 
 
 **`upload_input_file` is the right call when several test cases share one document.** A common
 shape is one dataset per pipeline stage, all pointing at the same file. `test_cases.create` does
-**not** deduplicate: the same path passed to two calls uploads twice.
+**not** deduplicate: the same path passed to two calls, or twice in one call, uploads twice.
 
 ### The CSV column
 
@@ -221,12 +236,14 @@ The second row has no text, only a file. That is accepted.
 `https://` is treated as a reference, not a local path: nothing is read from this machine and
 nothing is uploaded, and the URI is written into the row as sent. This is how a second dataset
 points at a document the first one uploaded, which is the normal shape when one document is scored
-at several pipeline stages. A reference also counts against neither the local size total nor the
-extension check, because the API owns that object and validates it on write.
+at several pipeline stages. A reference does not count against the local size total, but the SDK
+still checks its extension, read from the uri, and refuses a uri whose path has no `/files/`
+segment (an `audio/` object or a dataset CSV) before anything is uploaded.
 
 Within one `datasets.create` call the CSV path **does** deduplicate by absolute path, so the same
 document referenced by twenty rows uploads once. Every row is validated before the first upload,
-so a bad path costs no transfer. Row errors are prefixed with the row number.
+so a bad path costs no transfer. Row errors are prefixed with the row number. A CSV that carries
+this column must be UTF-8.
 
 ### Accepted file types
 
@@ -254,69 +271,184 @@ slip a type past the list.
 | Total size per input | 20 MB |
 
 **The size cap is a total across the input, not per file.** Twenty-one files, or 21 MB spread
-over three files, is refused.
+over three files, is refused. The same uri listed twice counts once toward the size and twice
+toward the count.
 
 ## Metrics skip on an input they cannot read
 
-A judge cannot read an uploaded file. So **every metric that reads the input is skipped, not
-scored**, with the reason `Evaluators cannot read input files yet.` That covers any metric
-declaring `input` or `conversation_turns` among its evaluation parameters, and it applies whether
-or not there is text beside the file. A skip costs no credits.
+A judge cannot read an uploaded file. The judge is sent the session's **turns** with every file
+part stripped out, never the test case input, so the turns decide what is skipped:
 
-This is the single most important thing to tell a user before they build a document dataset.
-The workflow that does work: run the document through their own pipeline, upload the output, and
-score the output with output-only metrics such as the JSON field match family. Self-hosted
-metrics, where the user computes the score, are never skipped.
+- **A metric that declares `input` is skipped** when no turn in the session carries readable
+  text, with the reason `Evaluators cannot read input files yet.` A turn is readable when it
+  yields text and carries **no** file part. Text sent beside the document does not count: it is
+  usually a prompt about the document, so scoring it would give a confident number about a file
+  the judge never read. A file test case runs as a single turn, so a platform run or an
+  `evaluations.run` over one **always** skips those metrics. A skip costs no credits.
+- **A metric that declares `conversation_turns` is never skipped** for a file. The turns are
+  scored as logged, blank first message included.
+- **One readable turn is enough.** An attachment on one turn of a long monitored session leaves
+  the rest of the session scorable.
+
+Two ways to get a score on a document, and say them before the user builds the dataset:
+
+1. **Log the extracted text as the turn input, without the file part.** In the manual loop below,
+   pass your pipeline's extracted text as `input=` to `traces.create_and_evaluate`, and the
+   `input` metrics score that text. `evaluations.run()` cannot override the input at all: it
+   writes the file envelope as the turn input, so it keeps skipping those metrics for a document
+   row.
+2. **Score only the output**, with a built-in deterministic metric such as the JSON Field Match
+   family. On Galtea Cloud since release 5.2.0, a JSON metric on an output that is not valid JSON
+   is `SKIPPED`, not `FAILED`, so a pipeline that answered prose does not read as a wrong answer. Self-hosted
+   metrics, where the user computes the score, are never skipped.
+
+The dashboard's Run Evaluation dialog greys out every metric the run would skip and shows the
+reason under its name, and a scored evaluation whose judged turns carried a file warns that the
+attachment was not sent to the judge.
+
+**The skip reason is in the evaluation's `error` field, which the SDK does not expose.** A
+`SKIPPED` evaluation read through `galtea.evaluations.get` has `reason=None` and no `error`
+attribute, so a script cannot tell a file skip from any other skip. Read the row with
+`galtea evaluations get <id>` (the `error` field) or in the dashboard.
 
 **The user cannot write their own output-only judge.** `POST /metrics` refuses an AI-evaluated
-metric whose `evaluationParams` omits `input` (`"evaluationParams" must include "input" -- the
-evaluator always provides these to the judge`), so every custom judge reads the input and every custom judge is
-therefore skipped on a file-carrying input. Output-only scoring means the platform's built-in
+metric whose `evaluationParams` omits `input` or `actual_output` (`"evaluationParams" must
+include "input" — the evaluator always provides these to the judge.`), so every custom judge
+reads the input and every custom judge is therefore skipped on a file-carrying input. Output-only scoring means the platform's built-in
 deterministic metrics (JSON Field Match, JSON Field Match (Normalized), Text Match, Text
 Similarity, URL Validation, ROUGE, BLEU, METEOR, IOU, Spatial Match, Tool Correctness) or a
 self-hosted metric. Offer those by name instead of suggesting a custom rubric.
 
 ## Running your agent on a file-carrying test case
 
-The platform does not run the inference for you, and neither runner delivers the file to the
-agent. Say this before the user wires anything up:
+Three runners deliver the file. Pick by where the user's product runs:
 
-- **An endpoint connection** renders the raw input envelope into the request template. The
-  endpoint receives the stored `s3://` reference, which it cannot fetch, and no download link is
-  ever exposed to the template.
-- **The SDK agent callback** (`evaluations.run` with an `Agent`) gets the text in
-  `message.content` and the file parts under `message.metadata["content"]`, still as stored
-  references. Nothing fetches them for you; the callback has to download them itself.
+| The product is | Runner | What delivers the file |
+|---|---|---|
+| Reachable over HTTP | Platform run (dashboard run button, `evaluations create-from-version`, `evaluations.run` without an agent) | `input_files` variables in the endpoint connection template |
+| A Python callable | `evaluations.run(agent=...)`, `simulator.simulate`, `traces.generate` | `input_data.input_files` on an `AgentInput` callback |
+| Not callable from Python and not reachable over HTTP | A manual loop | `galtea.storage.download` per test case |
 
-The loop that works today is manual. It is the same one the docs tutorial "Evaluate Document
-Inputs" (`/sdk/tutorials/evaluate-document-inputs`) walks end to end, so fetch that page for the
-full runnable version:
+All three write the file envelope as the turn input, so the `input` metrics skip as the section
+above says. Only the manual loop can log the extracted text instead.
+
+### Platform run: name the file in the template
+
+The endpoint connection template gets an `input_files` collection, one entry per attachment in
+`content[]` order, audio parts included. Each entry has exactly four properties, and a template
+reading any other one is refused when the connection is saved:
+
+| Property | Value |
+|---|---|
+| `url` | A presigned download link, valid **15 minutes**, minted fresh on every request attempt |
+| `base64` | The file bytes, base64. Read only when the template names it. The 20 MB cap is on the raw bytes, so the encoded body can reach about 27 MB |
+| `filename` | The part's `filename`, else the last segment of the storage key (a random id) |
+| `mime_type` | The part's `mimeType`, else a type derived from the key's extension, else `application/octet-stream` |
+
+```jinja2
+{"question": "{{ input.user_message }}", "document_url": "{{ input_files[0].url }}"}
+```
+
+Loop for several attachments, with the usual trailing-comma guard:
+
+```jinja2
+{"documents": [{% for file in input_files %}{"url": "{{ file.url }}", "name": "{{ file.filename }}"}{% if not loop.last %},{% endif %}{% endfor %}]}
+```
+
+Rules that change what you tell the user:
+
+- **A template that names no `input_files` variable refuses a file-only test case** before the
+  run starts, with a `400`: `Test case <id> attaches files and nothing else, but the endpoint
+  connection template names no {{ input_files }} variable. Add {{ input_files[0].url }} (or
+  .base64) to the template, or run these test cases through your own pipeline.` A test case that
+  also carries text **runs on the text alone**, the `202` response carries a `warnings` list
+  (`Test case <id> attaches files that are not delivered: ... so only the text is sent.`), and
+  the dashboard shows it. Check that list, or a document run silently scores an endpoint that
+  never saw the document. `galtea traces generate` (body `{"versionId": ..., "testCaseIds":
+  [...]}` as JSON on stdin or as the bracket shorthand `testCaseIds: [a, b]`) and
+  `evaluations create-from-version` both go through this gate.
+- **Only `url`, `base64`, `filename` and `mime_type` exist.** Saving a template that reads
+  another property is refused with `Invalid iterator property access: "input_files.size". Valid
+  properties for input_files items are: url, base64, filename, mime_type.`
+- **`{{ input.content[0].uri }}` renders nothing.** No unsigned storage URI reaches the endpoint
+  any more. `input_files` is the only way to read a file; an audio transcript still arrives in
+  `{{ input.user_message }}`.
+- **A test case with no attachment is not refused** by a file-aware template: `input_files[0].url`
+  renders empty and a loop renders nothing, so one template serves mixed datasets.
+- **A run that attaches files against a file-aware template skips the pre-run health check.**
+  The probe cannot stand in for a real file, so a broken endpoint shows up as failed turns, not
+  as a refused run; every other run is probed as before. The dashboard's Test connection button
+  sends a placeholder attachment whose URL points at nothing, so a failed download there is
+  expected.
+- **A failed fetch on the endpoint's side is the endpoint's error**, recorded on that turn, and
+  a failed turn fails its session. A file Galtea itself cannot sign or read fails the turn the
+  same way; Galtea never sends the request without the attachment.
+- **Import from cURL knows `input_files`.** Paste a request that carries a document, image, or
+  audio payload, and the generated template writes the file slot next to `{{ input.user_message }}`.
+
+### SDK callback: annotate the first parameter as `AgentInput`
+
+```python
+from galtea import AgentInput, AgentResponse
+
+def my_agent(input_data: AgentInput) -> AgentResponse:
+    # The same InputFile objects test_case.input_files returns: uri, filename, mime_type.
+    document_bytes = [galtea.storage.read(f) for f in input_data.input_files]
+    answer = my_pipeline(question=input_data.last_user_message_str(), documents=document_bytes)
+    # `content` is a str: json.dumps() a dict so JSON Field Match can parse it.
+    return AgentResponse(content=answer)
+
+galtea.evaluations.run(version_id=version.id, agent=my_agent)
+```
+
+- **Only the `AgentInput` signature (or an `Agent` subclass) receives files.** A `(str)` or
+  `(list[dict])` agent carries text only. With text beside the files the SDK **warns once per
+  agent** and runs it on the text. With files and no text it raises `FileOnlyTextAgentException`
+  before calling the agent, marks that trace `FAILED` with a message naming the fix, and each
+  runner then stops differently: `evaluations.run` continues with the next test case,
+  `simulator.simulate` ends that conversation with a stopping reason, and `traces.generate`
+  re-raises to the caller. A silent empty input is never delivered.
+- `input_data.input_files` is the last user message's files, which is the current turn during a
+  run. Each `ConversationMessage` keeps its own `input_files`, so an earlier turn's document
+  stays reachable through `messages`. `ConversationMessage.metadata` is unchanged, so a voice
+  agent reading `message.metadata["content"]` keeps working.
+- `galtea.storage.read(file)` returns the bytes without touching disk, for a multimodal request or
+  an in-memory parser; `galtea.storage.download(file, output_directory=...)` writes a file for a
+  library that needs a path. Both take an `InputFile` or a plain uri.
+- `simulator.simulate` runs the agent on a file-only turn (the API opens it with an empty message
+  and the files on the trace), but `max_turns>1` is refused: see "What a file-carrying test case
+  cannot do".
+
+### Manual loop: the only path that scores the document's text
+
+The docs tutorial "Evaluate Document Inputs" (`/sdk/tutorials/evaluate-document-inputs`) walks
+this end to end, so fetch that page for the full runnable version:
 
 ```python
 # include_legacy=False, or an edited test case comes back once per revision and you
 # download the same document again for each one.
 for tc in galtea.test_cases.list(dataset_id=dataset.id, include_legacy=False):
-    # 1. Fetch each attached file, saved under its uploaded name. On an older SDK this
-    #    is a raw request instead, see "Getting the bytes back".
+    # 1. Fetch each attached file, saved under its uploaded name.
     paths = [galtea.storage.download(f, output_directory=workdir) for f in tc.input_files]
     # 2. Call the user's own pipeline with the text and the local files.
-    answer = my_agent(question=tc.input, document_paths=paths)
-    # 3. Record the answer against the test case and score it in one call.
+    extracted_text, answer = my_agent(question=tc.input, document_paths=paths)
+    # 3. Record the answer against the test case and score it in one call. Logging the
+    #    extracted text as `input`, with no file part, is what lets `input` metrics score.
     session = galtea.sessions.create(version_id=version.id, test_case_id=tc.id)
     galtea.traces.create_and_evaluate(
-        session_id=session.id, output=answer, metrics=[{"name": "JSON Field Match"}]
+        session_id=session.id,
+        input=extracted_text,
+        output=answer,
+        metrics=[{"name": "JSON Field Match"}],
     )
 ```
 
 `tc.input` is the `user_message` text as a plain string, and it is `None` when the row carries
 files and no text. The full envelope is `tc.input_data` and the file parts are `tc.input_files`,
-so send your pipeline `tc.input` for the text and the fetched files separately. The trace needs
-no `input`: the session is linked to the test case, and the evaluation reads the input, file
-parts included, from there. Wrap the download in `try`/`except` if one unreadable document
-should not stop the rest.
-
-Every metric that declares `input` is still skipped on that evaluation; score the output with
-output-only or self-hosted metrics as the section above says.
+so send your pipeline `tc.input` for the text and the fetched files separately. Leave `input` out
+of the trace and the evaluation reads the test case input, file parts included, and the `input`
+metrics skip. Wrap the download in `try`/`except` if one unreadable document should not stop the
+rest.
 
 ## Getting the bytes back
 
@@ -325,18 +457,20 @@ A stored `uri` is a reference, not a link. From the SDK, one call saves the file
 ```python
 # Takes an InputFile straight from a test case, or any uri this organization uploaded.
 path = galtea.storage.download(test_case.input_files[0], output_directory="./docs")
+# The bytes in memory, no file written (galtea>=5.3.0).
+data = galtea.storage.read(test_case.input_files[0])
 # The upload side is public too: returns the stored uri.
 uri = galtea.storage.upload("./rental-contract.pdf")
 ```
 
-**`galtea.storage` is public only on a newer SDK**, where both methods arrive together. On an
-older one the service exists but is private, so `hasattr(galtea, "storage")` is the probe, and
-the two commands below are the fallback. The SDK reference for both methods is
-`/sdk/api/storage/service` on the docs site, with `/sdk/api/storage/download` and
-`/sdk/api/storage/upload` underneath.
+**`galtea.storage` is public since SDK 5.2.0** (`upload` and `download`); `read` arrived in
+5.3.0. A 5.1 or older SDK has no storage service at all, so `hasattr(galtea, "storage")` is the
+probe and the two commands below are the fallback. The SDK reference is
+`/sdk/api/storage/service` on the docs site, with `/sdk/api/storage/download`,
+`/sdk/api/storage/read` and `/sdk/api/storage/upload` underneath.
 
-`download` saves under the `InputFile`'s `filename`, or under `filename=` when you pass one, and
-otherwise under the random storage id. It raises rather than returning `None`: `ValueError` when
+`download` saves under `filename=` when you pass one, else under the `InputFile`'s own
+`filename`, else under the random storage id. It raises rather than returning `None`: `ValueError` when
 no uri was given or the value names a file on this machine (the mistake of passing `download` the
 path meant for `upload`), and a plain exception for a refused uri or a failed transfer. The error
 never contains the presigned URL. A fresh uri straight from an upload still carries its signature;
@@ -353,7 +487,8 @@ curl -sL -o rental-contract.pdf "<downloadPresignedUrl>"
 - **The response is `{downloadPresignedUrl}`.** The `--help` and OpenAPI text say `{url}`, the same
   spec error as the upload call. Do not read `url`.
 - **The link lives 24 hours** and is a read capability for that object: do not paste it into a
-  reply or a log. Store the `uri`, mint a link when you need one.
+  reply or a log. Store the `uri`, mint a link when you need one. The `input_files[].url` a
+  platform run hands the endpoint is a different mint and lives 15 minutes.
 - **Another organization's file answers `404 File not found`**, never `403`, so the platform does
   not confirm the file exists. A platform admin key is exempt and can read any organization's
   file; do not mistake that for the rule.
@@ -363,15 +498,24 @@ curl -sL -o rental-contract.pdf "<downloadPresignedUrl>"
   so check the return value when you cannot rely on the version.
 - **Many files at once:** `POST /storage/generate-get-presigned-urls` with `{"uris": [...]}`
   returns `{downloadPresignedUrls: {<uri>: <link>}}` and silently omits any uri the caller does
-  not own or that does not exist. It has no CLI verb, so it is a raw call. Compare the keys you
-  get back against the ones you sent before assuming every file resolved.
+  not own or that does not exist. It has no CLI verb, so it is a raw call. At most 100 uris per
+  call, and a uri with leading or trailing whitespace makes the whole call a `400`. Compare the
+  keys you get back against the ones you sent before assuming every file resolved.
 
 ## What a file-carrying test case cannot do
 
-- **Single turn only.** A file satisfies the first turn, but a multi-turn simulation is refused.
-- **Platform-run inference is refused.** Galtea will not call the user's endpoint with a file
-  input, because the request shape a document pipeline expects is not defined. The user runs
-  their own pipeline and uploads the result.
+- **Single turn only.** A file satisfies the first turn, and a run that asks for more is refused:
+  `Test case <id> attaches files to its input, which the platform supports for single-turn runs
+  only. Remove the files, or run this test case as a single turn.` That covers a `BEHAVIOR`
+  scenario and `simulator.simulate(max_turns>1)`; neither leaves a turn behind.
+- **The judge never sees the file.** Vision judging is deferred. The `input` metrics skip unless a
+  turn carries file-free text, as "Metrics skip on an input they cannot read" says.
+- **Augment is refused** for a dataset whose test cases carry file or audio parts, with a `400`
+  before any credit is reserved; the dashboard disables the button with the same sentence. Extend
+  has no media guard, but it re-runs the dataset's original generator, so a dataset built from an
+  uploaded CSV is refused too (`This test cannot be extended: it was not generated from a reusable
+  source`). More document test cases means uploading more rows. Without the augment guard every
+  augmented row pointed at one attachment with invented text about it.
 - **An edit can never leave the test case with no file.** Two separate refusals enforce it:
   sending `input` as a plain string is refused, because a bare string would drop every
   attachment; and sending a structured `input` whose `content` keeps no file part is refused too.
@@ -396,7 +540,17 @@ curl -X PUT --upload-file ./rental-contract.pdf \
   "<uploadPresignedUrl>"
 ```
 
-Then create the test case with the `downloadPresignedUrl` as the part's `uri`.
+Then create the test case with the `downloadPresignedUrl` as the part's `uri`. The body goes as
+JSON on stdin, and the dataset field is the wire name `testId`:
+
+```bash
+cat <<EOF | galtea test-cases create
+{"testId": "<datasetId>",
+ "input": {"user_message": "Summarize this contract",
+           "content": [{"type": "file", "uri": "<downloadPresignedUrl>",
+                        "filename": "rental-contract.pdf", "mimeType": "application/pdf"}]}}
+EOF
+```
 
 Four things to get right here:
 
@@ -414,6 +568,8 @@ The `x-ms-blob-type` header is what Azure storage requires on a presigned PUT. S
 the one command above works on either backend.
 
 **The CLI cannot upload a file itself.** Its command tree is generated from the API spec and only
-sends JSON bodies, so `field: @/path/to/file` inlines the file's *text* as a string rather than
-uploading it. Use the SDK, or the `curl` step above. Do not present any other CLI invocation as
-an upload; a command that appears to accept a path will silently send the wrong thing.
+sends JSON bodies. `field: @/path/to/file` reads the file locally and inlines it into the body: a
+`.json` file is parsed as an object, a UTF-8 file becomes a string, and a binary file such as a
+PDF becomes a base64 string. None of these is an upload. Use the SDK, or the `curl` step above.
+Do not present any other CLI invocation as an upload; a command that appears to accept a path
+will silently send the wrong thing.

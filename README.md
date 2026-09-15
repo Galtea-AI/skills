@@ -60,7 +60,7 @@ You need a Galtea account and an API key:
 export GALTEA_API_KEY=gsk_...
 ```
 
-API keys are found in the Galtea dashboard under **Settings → API Keys**. Each account has a single key; regenerating permanently replaces it.
+API keys are found in the Galtea dashboard under **Settings → API Keys**. An account has one key by default, and regenerating it permanently replaces it. Enterprise plans can hold several named tokens.
 
 ## Usage
 
@@ -70,6 +70,7 @@ Once installed, the agent will automatically use this skill when relevant — fo
 - Writing specifications and generating datasets + metrics from them
 - Running evaluations via `create-from-version`, `create-from-session`, or `create-from-trace`
 - Polling async evaluations and reading their scores
+- Uploading a dataset you already have as a CSV, with documents or images attached to its rows, and testing a product that reads them
 - Tracing agent internals (tool calls, LLM calls) as Span records
 - Querying products, datasets, metrics, sessions, traces, and spans
 
