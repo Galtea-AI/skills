@@ -53,7 +53,7 @@ galtea evaluations list --version-ids <versionId> -o json \
   | jq '.[] | {id, metricId, status, score, reason}'
 ```
 
-For body fields on the create call (`versionId`, optional `specificationIds`), the CLI uses Restish's inline shorthand: `key: value` pairs, comma-separated, with arrays in `[a, b, c]` form. To pass multiple specifications:
+The body takes `versionId` **or** `productId`, plus optional `specificationIds`. With `productId` alone the platform clones the product's latest properly configured version and runs against the clone, which needs permission to create versions (a `403` otherwise); the `202` names the clone in `versionId`. For these body fields the CLI uses Restish's inline shorthand: `key: value` pairs, comma-separated, with arrays in `[a, b, c]` form. To pass multiple specifications:
 
 ```bash
 galtea evaluations create-from-version versionId: <versionId>, specificationIds: [<spec1>, <spec2>] </dev/null
@@ -70,20 +70,20 @@ Run `galtea evaluations create-from-version --help` for the canonical request sc
 
 ## Why step 4 is needed
 
-`create-from-version` returns `202 Accepted` with a `jobId` because the evaluation jobs are created asynchronously -- typically one per (Specification x Metric x TestCase) combination. The caller has to list the freshly-created evaluations (status `PENDING`, filtered by `versionId`) to learn their IDs, then poll each one until `status` reaches a terminal state.
+`create-from-version` returns `202 Accepted` with a `jobId` because the evaluation jobs are created asynchronously -- one per test case per metric of that test case's own specification (a dataset belongs to one specification, so its rows are never crossed with another specification's metrics). The caller has to list the freshly-created evaluations (status `PENDING`, filtered by `versionId`) to learn their IDs, then poll each one until `status` reaches a terminal state.
 
 Terminal states for the poll:
 
-- `SUCCESS`, `FAILED`, `SKIPPED` -- stop polling and report to the user.
+- `SUCCESS`, `FAILED`, `SKIPPED`, `CANCELLED`, `OUTDATED` -- stop polling and report to the user.
 - `PENDING_HUMAN` -- evaluation is waiting for a human reviewer. Stop polling and surface that state to the user; this evaluation will never reach SUCCESS on its own.
 
 ## Common pitfalls
 
-- **Datasets must be `status: SUCCESS`** before `create-from-version` will create evaluations against them. `PENDING` / `AUGMENTING` datasets are skipped silently. Check `galtea datasets list --product-ids <productId>` first if step 4 returns fewer evaluations than expected.
-- **Credits are consumed** by the newly-created evaluations. Pre-flight by resolving the org id (`galtea auth get-current-user -f body.organizationId`), then `galtea organizations get-credit-status <organizationId>` (run `--help` for the exact arg shape) to inspect `totalCredits` / `usedCredits` / `remainingCredits`. If an org runs out mid-run, evaluations fail with a `message` in the body -- no dedicated HTTP status code, so inspect the message rather than matching on a code.
+- **Datasets must be `status: SUCCESS`** before `create-from-version` will create evaluations against them. Every other status (`PENDING`, `AUGMENTING`, `EXTENDING`, `FAILED`, `CANCELLED`) is dropped, silently while at least one `SUCCESS` dataset remains; when none does, the call answers `400` `No tests linked to specifications found`. Check `galtea datasets list --product-ids <productId>` first if step 4 returns fewer evaluations than expected.
+- **Credits are consumed** by the newly-created evaluations. Pre-flight by resolving the org id (`galtea auth get-current-user -f body.organizationId`), then `galtea organizations get-credit-status <organizationId>` (run `--help` for the exact arg shape) to inspect `remainingCredits`, `monthlyCredits`, `isLowCredits` and `isExhausted` (the `--help` response schema still says `totalCredits` / `usedCredits`; those fields do not exist). A call that cannot afford its evaluations answers `400` with the credit text in `message`; evaluations that hit the limit mid-run land as `SKIPPED` with that text as their reason and `canRetry` true, so top up and `galtea evaluations retry` them.
 - **Duplicate names** on related resources (products, versions, datasets, metrics) return `400 Bad Request` with a body `message` containing the substring `"with the same"` (case-insensitive). Wording varies per entity -- see the duplicate-name gotcha in `SKILL.md` for examples. Do not blind-retry on any 400; parse the message first.
 - **Stale local spec**. If `galtea evaluations create-from-version` errors with "unknown command" or a flag the docs say exists is missing, run `galtea sync` to refresh the OpenAPI command tree.
 
 ## Alternative creation paths
 
-`create-from-version` is only one entry point. For `create-from-session`, `create-from-trace`, `create-single-turn`, `retry`, and `replay-from-metrics`, see the "Evaluation creation paths" routing table in `SKILL.md`. Each one is a sibling under `galtea evaluations`; run `galtea evaluations --help` to see the full verb list.
+`create-from-version` is only one entry point. For `create-from-session`, `create-from-sessions`, `create-from-trace`, `create-single-turn`, `retry`, `replay-from-metrics`, and `replay-from-test-cases`, see the "Evaluation creation paths" routing table in `SKILL.md`. Each one is a sibling under `galtea evaluations`; run `galtea evaluations --help` to see the full verb list.

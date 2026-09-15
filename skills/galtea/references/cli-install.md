@@ -29,7 +29,7 @@ If the user has Python 3.9+:
 pip install galtea-cli
 ```
 
-The `galtea-cli` PyPI package ships per-platform wheels that bundle the same `galtea` binary used by every other channel. The console-script entry point lands in pip's user-scripts directory (typically `~/.local/bin` on Linux/macOS, under `%APPDATA%\Python\` on Windows -- the exact subdirectory is version-suffixed, e.g. `Python313\Scripts`). On most systems that directory is already on `PATH`; if `galtea --version` cannot be found after install, see Troubleshooting below for the canonical lookup. To upgrade later: `pip install --upgrade galtea-cli`.
+The `galtea-cli` PyPI package ships per-platform wheels that bundle the same `galtea` binary used by every other channel. The console-script entry point lands in the script directory of whichever environment pip installed into: a virtualenv's `bin`, or for a `--user` install pip's user-scripts directory (typically `~/.local/bin` on Linux/macOS, under `%APPDATA%\Python\` on Windows -- the exact subdirectory is version-suffixed, e.g. `Python313\Scripts`). On most systems that directory is already on `PATH`; if `galtea --version` cannot be found after install, see Troubleshooting below for the canonical lookup. To upgrade later: `pip install --upgrade galtea-cli`.
 
 For a PATH-safe isolated install (recommended when the user already uses pipx or wants the CLI separated from project venvs): `pipx install galtea-cli`.
 
@@ -80,7 +80,7 @@ Rocky Linux and AlmaLinux use the same repository.
 galtea --version
 ```
 
-A version string (e.g. `galtea version 4.x.y`) confirms the binary is on `PATH`. If the command is not found after a successful install, the install dir is missing from `PATH`:
+A version string (e.g. `galtea version 5.x.y`) confirms the binary is on `PATH`. If the command is not found after a successful install, the install dir is missing from `PATH`:
 
 - `pip` / `pipx` install: ensure the user-bin dir (`python3 -m site --user-base`/`bin`, or `~/.local/bin`) is on `PATH`.
 - Homebrew install: ensure Homebrew's `bin` directory is on `PATH` (`/opt/homebrew/bin` on Apple Silicon macOS, `/usr/local/bin` on Intel macOS, or the user's Linuxbrew prefix on Linux).
