@@ -70,6 +70,7 @@ Once installed, the agent will automatically use this skill when relevant — fo
 - Writing specifications and generating datasets + metrics from them
 - Running evaluations via `create-from-version`, `create-from-session`, or `create-from-trace`
 - Polling async evaluations and reading their scores
+- Uploading a dataset you already have as a CSV, with documents or images attached to its rows, and testing a product that reads them
 - Tracing agent internals (tool calls, LLM calls) as Span records
 - Querying products, datasets, metrics, sessions, traces, and spans
 
