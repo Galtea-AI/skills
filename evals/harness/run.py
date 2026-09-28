@@ -152,7 +152,10 @@ def run_case(
                         if p["id"] not in before
                     ]
                 for p in created:
-                    log += teardown_mod.teardown(p["id"])
+                    try:
+                        log += teardown_mod.teardown(p["id"])
+                    except Exception as e:  # noqa: BLE001 - tear down the other products
+                        log.append(f"FAILED product {p['id']}: {e}")
                 log = log or ["no product created; nothing to delete"]
             except Exception as e:  # noqa: BLE001 - record and carry on to the next case
                 log.append(f"TEARDOWN FAILED: {e}")
