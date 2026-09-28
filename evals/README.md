@@ -36,3 +36,7 @@ Each run creates real entities and spends real credits. Run it in a test organiz
 A case is a YAML file in `cases/`: an `id`, the `prompt`, an optional `workspace` under `fixtures/workspaces/`, optional `fixtures` files, and `expect`. `check.py` documents the assertion vocabulary.
 
 Write prompts the way a user would: no product name, and no hint about the path the skill should teach.
+
+## Coverage audit
+
+`harness/coverage.py` lists the public CLI commands the skills never name, from the OpenAPI spec the CLI syncs against. It shows where to look first, not what fails: an agent often finds an unnamed command through `--help`.
