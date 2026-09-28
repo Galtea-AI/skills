@@ -8,6 +8,7 @@ Assertion vocabulary (kept small on purpose):
   each:  {field: value} | {field: {in: [...]}} | {generated: true} | {from_specification: true}
   links: every_specification_has_metrics, every_specification_has_dataset
   final_message_matches: <regex>
+  commands_include: [<regex>, ...]   (each matches at least one `galtea` call)
   product: true | false   (omit it when either outcome is fine)
 
 `generated` reads `isExtendable`: the API sets it only for a dataset whose cases a
@@ -63,7 +64,7 @@ def check(
             expect["product"],
         )
     for entity, rule in expect.items():
-        if entity in ("product", "links", "final_message_matches"):
+        if entity in ("product", "links", "final_message_matches", "commands_include"):
             continue
         rows = state.get(entity) or []
         if "count" in rule:
@@ -101,6 +102,15 @@ def check(
         add(
             "final_message_matches",
             re.search(pat, actions.get("final_message") or "") is not None,
+            None,
+            pat,
+        )
+
+    commands = [c["command"] for c in actions.get("galtea_calls") or []]
+    for pat in expect.get("commands_include") or []:
+        add(
+            f"commands_include:{pat}",
+            any(re.search(pat, c) for c in commands),
             None,
             pat,
         )
