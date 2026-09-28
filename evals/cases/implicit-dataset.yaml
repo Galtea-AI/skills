@@ -1,0 +1,14 @@
+id: implicit-dataset
+# The reported case, without the word "generate": the user asks for test data
+# from inside the chatbot's repo. Passes only if the platform generated the cases
+# instead of the agent writing and uploading them.
+workspace: bank-chatbot
+prompt: |
+  I want to start testing this chatbot with Galtea. Create a product for it and
+  give me a test dataset for each of the behaviours in its system prompt, about
+  10 test cases each. Tell me the dataset IDs.
+expect:
+  product: true
+  datasets:
+    count: ">=3"
+    each: {status: SUCCESS, generated: true}
