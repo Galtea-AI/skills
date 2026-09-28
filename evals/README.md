@@ -29,7 +29,11 @@ python3 report.py ../runs/<run-id>
 
 Results land in `runs/<run-id>/<arm>/<case>/`, which git ignores: transcripts and platform state hold organization and product ids.
 
-Each run creates real entities and spends real credits. Run it in a test organization, and do not create products as the same user while it runs: the harness finds the run's products by creator and creation time.
+Before you run it:
+
+- **Read every case you run, in full: prompt, workspace and fixtures.** The agent runs with `--permission-mode bypassPermissions`, so it executes every tool call unattended, under your own Galtea and Claude credentials. A case from someone else is code you are about to run.
+- **Use a test organization.** Each run creates real entities and spends real credits.
+- **Run one harness at a time, and create no products as the same user while it runs.** The harness finds the run's products by creator and creation time, so a second run, or a product you create by hand, is collected and deleted as if the run had made it.
 
 ## Cases
 
