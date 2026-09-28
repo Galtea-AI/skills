@@ -184,9 +184,21 @@ def main() -> None:
         "--keep", action="store_true", help="skip teardown, to inspect in the dashboard"
     )
     a = ap.parse_args()
+    # A malformed case would crash mid-batch, after earlier cases spent their credits.
+    errors = [
+        f"{case}: {e}"
+        for case in a.case
+        for e in check_mod.validate_case(yaml.safe_load(case.read_text()))
+    ]
+    if errors:
+        raise SystemExit("\n".join(errors))
     for arm in a.arm:
         for case in a.case:
-            out = run_case(case, arm.resolve(), a.run_id, a.model, a.keep)
+            try:
+                out = run_case(case, arm.resolve(), a.run_id, a.model, a.keep)
+            except Exception as e:  # noqa: BLE001 - one case must not cancel the rest
+                print(f"{arm.name:12} {case.stem:28} ERROR  {e}")
+                continue
             score = (
                 json.loads((out / "score.json").read_text())
                 if (out / "score.json").exists()
