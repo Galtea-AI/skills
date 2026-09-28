@@ -20,12 +20,27 @@ from typing import Any
 
 TIMEOUT_S = 60
 LIMIT = "500"
+# Lists report superseded revisions unless told not to, and every count a case checks is
+# of what is live now.
+LIVE = "--include-legacy=false"
+# The entity lists collect() returns: the keys a case's `expect` may name.
+ENTITIES = (
+    "products",
+    "versions",
+    "endpoint_connections",
+    "specifications",
+    "datasets",
+    "test_cases",
+    "metrics",
+    "sessions",
+    "evaluations",
+)
 
 
 def galtea(*args: str) -> Any:
     # stdin closed: body-taking commands otherwise block in a non-TTY harness.
     out = subprocess.run(
-        ["galtea", *args],
+        ["galtea", *args, "-o", "json"],
         stdin=subprocess.DEVNULL,
         check=False,
         capture_output=True,
@@ -51,8 +66,13 @@ def my_products_since(since_iso: str, user_id: str) -> list[dict[str, Any]]:
     return [r for r in rows if r.get("userId") == user_id]
 
 
-def product_metrics(pid: str, spec_ids: list[str]) -> list[dict[str, Any]]:
-    rows = galtea("metrics", "list", "--product-ids", pid, "--limit", LIMIT) or []
+def product_metrics(
+    pid: str, spec_ids: list[str], include_legacy: bool = False
+) -> list[dict[str, Any]]:
+    legacy = [] if include_legacy else [LIVE]
+    rows = (
+        galtea("metrics", "list", "--product-ids", pid, "--limit", LIMIT, *legacy) or []
+    )
     if spec_ids:
         rows += (
             galtea(
@@ -62,6 +82,7 @@ def product_metrics(pid: str, spec_ids: list[str]) -> list[dict[str, Any]]:
                 ",".join(spec_ids),
                 "--limit",
                 LIMIT,
+                *legacy,
             )
             or []
         )
@@ -88,6 +109,7 @@ def collect(products: list[dict[str, Any]]) -> dict[str, Any]:
                 ",".join(d["id"] for d in datasets),
                 "--limit",
                 LIMIT,
+                LIVE,
             )
             or []
         )

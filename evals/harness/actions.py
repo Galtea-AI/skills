@@ -11,11 +11,23 @@ import re
 from pathlib import Path
 from typing import Any
 
-# Prefixed cuid ids the API mints (`product_…`, `test_…` for datasets, …).
+# Prefixed cuid ids the API mints (`product_…`, `test_…` for datasets, …), limited to the
+# entities collect() gathers: an id it cannot look up would always read as fabricated.
 ID_RE = re.compile(
-    r"\b(?:product|version|specification|test|testCase|metric|evaluation|session|inferenceResult|endpointConnection)_[a-z0-9]{20,30}\b"
+    r"\b(?:product|version|specification|test|testCase|metric|evaluation|session|endpointConnection)_[a-z0-9]{20,30}\b"
 )
-API_CURL_RE = re.compile(r"\bcurl\b[^\n]*api\.galtea\.ai")
+API_URL_RE = re.compile(r"https?://api\.galtea\.ai\b")
+# One shell command per segment: a curl to the docs followed by `galtea login --host
+# https://api.galtea.ai` is not a curl to the API.
+SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;|\n]")
+
+
+def curls_the_api(command: str) -> bool:
+    joined = command.replace("\\\n", " ")
+    return any(
+        re.search(r"\bcurl\b", seg) and API_URL_RE.search(seg)
+        for seg in SEGMENT_SPLIT_RE.split(joined)
+    )
 
 
 def parse(transcript: Path) -> dict[str, Any]:
@@ -84,7 +96,7 @@ def parse(transcript: Path) -> dict[str, Any]:
             for c in bash
             if re.search(r"\b(python3?|uv run|pip)\b", cmd(c))
         ],
-        "curl_to_api": [cmd(c) for c in bash if API_CURL_RE.search(cmd(c))],
+        "curl_to_api": [cmd(c) for c in bash if curls_the_api(cmd(c))],
         "failed_calls": [
             {"tool": c["tool"], "command": cmd(c)[:300]}
             for c in ordered

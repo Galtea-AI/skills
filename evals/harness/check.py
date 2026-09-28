@@ -11,6 +11,10 @@ Assertion vocabulary (kept small on purpose):
   commands_include: [<regex>, ...]   (each matches at least one `galtea` call)
   product: true | false   (omit it when either outcome is fine)
 
+`validate_case` rejects any other key, an entity collect() never returns, and a count it
+cannot parse, before an agent run spends anything. An `each` rule over no rows fails:
+a typo or an empty result must not read as a pass.
+
 `generated` reads `isExtendable`: the API sets it only for a dataset whose cases a
 generator produced (`Test.isGenerated()`: `taskId` is set). `specificationId` is not
 proof, because an uploaded dataset can carry one too.
@@ -24,6 +28,26 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from collect import ENTITIES
+
+RULE_KEYS = ("product", "links", "final_message_matches", "commands_include")
+COUNT_RE = re.compile(r"^(>=|<=)?\s*\d+$")
+
+
+def validate_case(case: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for key, rule in (case.get("expect") or {}).items():
+        if key in RULE_KEYS:
+            continue
+        if key not in ENTITIES:
+            errors.append(
+                f"unknown expect key {key!r}; entities are {', '.join(ENTITIES)}"
+            )
+            continue
+        if "count" in rule and not COUNT_RE.match(str(rule["count"]).strip()):
+            errors.append(f"{key}.count {rule['count']!r}: use n, '>=n' or '<=n'")
+    return errors
 
 
 def _count_ok(n: int, spec: Any) -> bool:
@@ -64,7 +88,7 @@ def check(
             expect["product"],
         )
     for entity, rule in expect.items():
-        if entity in ("product", "links", "final_message_matches", "commands_include"):
+        if entity in RULE_KEYS:
             continue
         rows = state.get(entity) or []
         if "count" in rule:
@@ -75,6 +99,9 @@ def check(
                 rule["count"],
             )
         for field, want in (rule.get("each") or {}).items():
+            if not rows:
+                add(f"{entity}.each.{field}", False, {"no_rows": entity}, want)
+                continue
             bad = [r.get("id") for r in rows if not _field_ok(r, field, want)]
             add(f"{entity}.each.{field}", not bad, {"failing_ids": bad}, want)
 
