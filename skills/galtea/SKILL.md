@@ -267,6 +267,16 @@ The create paths split into three groups by response shape:
 
 In all three groups, individual evaluations start at `status: PENDING` and reach `SUCCESS` / `FAILED` / `SKIPPED` / `PENDING_HUMAN` (or, rarely, `CANCELLED` / `OUTDATED`) as workers process them. Prefer `galtea evaluations list --ids …` (or `--version-ids` / `--session-ids` if the scope already filters them) over a per-id loop with `evaluations get`; the batch call traffics one HTTP request per poll cycle regardless of how many evaluations you queued. Treat `PENDING_HUMAN` as terminal for polling -- it waits for a human reviewer.
 
+## Generate datasets and metrics from specifications
+
+When the product has specifications, let the platform write the test cases and the judges. Do not write test cases, CSV rows, or judge prompts yourself unless the user hands them to you: a generated dataset is extendable and linked to its specification, and a generated metric is built from the specification's own wording.
+
+1. **Datasets.** `galtea datasets generate-config specificationIds: [spec_1, spec_2], automaticCreation: true, maxTestCases: 10 </dev/null` creates one dataset per specification and starts its generation. The type (behavior, accuracy, security) follows from each specification. An accuracy specification also needs `groundTruthUri`, a knowledge base file uploaded beforehand; without one, say so to the user instead of writing the answers yourself. For a single dataset, `galtea datasets create` with a `specificationId` and no `uri` runs the same generator.
+2. **Metrics.** `galtea metrics generate-config specificationIds: [spec_1, spec_2], automaticCreation: true </dev/null` creates one to three judge metrics per specification and links them to it. Use `metrics create` only for a metric the user describes that no specification covers.
+3. **Wait for `SUCCESS`.** Generated datasets start `PENDING`. Poll `galtea datasets list --product-ids <id>` until none is `PENDING`, `AUGMENTING` or `EXTENDING` before you report the test cases or start an evaluation (see the `status: SUCCESS` gotcha).
+
+Run `--help` on both commands for the live fields. Generation spends credits: check `get-credit-status` first when the user asked for many test cases.
+
 ## Upload a dataset the user already has
 
 When the user already has the test content, upload it instead of generating it. Route by what
@@ -326,7 +336,7 @@ Each workflow below maps to a docs page. Fetch the page via `llms.txt` before ad
 | User wants to... | Workflow | Docs path |
 |---|---|---|
 | Get started from zero | Quickstart: create product, install SDK, create dataset, choose metric, run evaluation | `/quickstart` |
-| Define what their product should do | Write specifications, then auto-generate datasets and metrics from them | `/sdk/tutorials/writing-specifications` |
+| Define what their product should do | Write specifications, then generate datasets and metrics from them ("Generate datasets and metrics from specifications" above) | `/sdk/tutorials/writing-specifications` |
 | Run dataset-based evaluations | Create datasets + metrics, run agent against test cases, evaluate | `/sdk/tutorials/run-dataset-based-evaluations` |
 | Use specifications to drive everything | Spec-driven flow: specs generate metrics + datasets, then evaluate | `/sdk/tutorials/specification-driven-evaluations` |
 | Test multi-turn conversations | Simulate user conversations against the agent, then evaluate sessions | `/sdk/tutorials/simulating-conversations` |
@@ -393,4 +403,4 @@ When triggered, follow the process in [references/skill-feedback.md](references/
 
 - **Building the AI product itself.** This skill is for *evaluating* products, not authoring them.
 - **Pure UI browsing.** If the user just wants to look at results visually, point them at `https://platform.galtea.ai` instead of replaying the CLI chain.
-- **Hand-writing test content.** Galtea generates test cases from specifications (see `/sdk/tutorials/writing-specifications`). Let the platform do that work.
+- **Hand-writing test content or judge prompts.** Galtea generates both from specifications: see "Generate datasets and metrics from specifications". Upload only content the user already has.
