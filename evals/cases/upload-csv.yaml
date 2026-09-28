@@ -1,0 +1,15 @@
+id: upload-csv
+# The one path that must NOT generate: the user already has the test cases.
+fixtures: [support_questions.csv]
+prompt: |
+  I already have test cases for my bank support chatbot in
+  support_questions.csv in this folder. Create a product for the chatbot in
+  Galtea and upload that file as an accuracy dataset. Don't generate new
+  test cases. Tell me the dataset ID and how many test cases it has.
+expect:
+  product: true
+  datasets:
+    count: 1
+    each: {status: SUCCESS, generated: false}
+  test_cases:
+    count: 5
