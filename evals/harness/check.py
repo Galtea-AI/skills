@@ -133,7 +133,12 @@ def check(
             pat,
         )
 
-    commands = [c["command"] for c in actions.get("galtea_calls") or []]
+    # A `--help` probe reads about a command without running it.
+    commands = [
+        c["command"]
+        for c in actions.get("galtea_calls") or []
+        if "--help" not in c["command"]
+    ]
     for pat in expect.get("commands_include") or []:
         add(
             f"commands_include:{pat}",
