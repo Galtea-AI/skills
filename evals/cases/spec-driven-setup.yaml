@@ -20,3 +20,5 @@ expect:
     count: ">=1"
   links:
     every_specification_has_metrics: true
+  # A hand-written judge (`metrics create`) is the failure this case exists for.
+  commands_include: ['metrics generate-config']

@@ -8,6 +8,7 @@ Assertion vocabulary (kept small on purpose):
   each:  {field: value} | {field: {in: [...]}} | {generated: true} | {from_specification: true}
   links: every_specification_has_metrics, every_specification_has_dataset
   final_message_matches: <regex>
+  commands_include: [<regex>, ...]   (each matches at least one `galtea` call)
   product: true | false   (omit it when either outcome is fine)
 
 `validate_case` rejects any other key, an entity collect() never returns, and a count it
@@ -30,7 +31,7 @@ import yaml
 
 from collect import ENTITIES
 
-RULE_KEYS = ("product", "links", "final_message_matches")
+RULE_KEYS = ("product", "links", "final_message_matches", "commands_include")
 COUNT_RE = re.compile(r"^(>=|<=)?\s*\d+$")
 
 
@@ -128,6 +129,20 @@ def check(
         add(
             "final_message_matches",
             re.search(pat, actions.get("final_message") or "") is not None,
+            None,
+            pat,
+        )
+
+    # A `--help` probe reads about a command without running it.
+    commands = [
+        c["command"]
+        for c in actions.get("galtea_calls") or []
+        if "--help" not in c["command"]
+    ]
+    for pat in expect.get("commands_include") or []:
+        add(
+            f"commands_include:{pat}",
+            any(re.search(pat, c) for c in commands),
             None,
             pat,
         )
