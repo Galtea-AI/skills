@@ -484,8 +484,7 @@ galtea storage generate-get-url --uri "s3://<bucket>/files/<organizationId>/<id>
 curl -sL -o rental-contract.pdf "<downloadPresignedUrl>"
 ```
 
-- **The response is `{downloadPresignedUrl}`.** The `--help` and OpenAPI text say `{url}`, the same
-  spec error as the upload call. Do not read `url`.
+- **The response is `{downloadPresignedUrl}` alone.** Only the put route also returns an upload link.
 - **The link lives 24 hours** and is a read capability for that object: do not paste it into a
   reply or a log. Store the `uri`, mint a link when you need one. The `input_files[].url` a
   platform run hands the endpoint is a different mint and lives 15 minutes.
@@ -554,8 +553,8 @@ EOF
 
 Four things to get right here:
 
-- **The response is `{downloadPresignedUrl, uploadPresignedUrl}`.** The OpenAPI description for
-  this operation says the body is `{url}`, which is wrong. Do not read `url`; it does not exist.
+- **The response is `{downloadPresignedUrl, uploadPresignedUrl}`.** PUT the bytes to
+  `uploadPresignedUrl`, then use `downloadPresignedUrl` as the part's `uri`.
 - **`key` is the file name.** The storage key is minted server-side under the organization's own
   folder. The caller cannot choose where the object lands, and a URI outside that folder is
   refused when the test case is created.
