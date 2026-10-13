@@ -148,9 +148,9 @@ revision at all. Route them to the CLI or the dashboard. The SDK can read the li
 
 ### Metric -- a revision is created, not edited
 
-`PATCH /metrics/:id` **never** forks, and it accepts only `name`, `description`, `tags`, and
-`userGroupIds`. The refusal message names just the first three, so it reads as if assigning user
-groups were blocked too.
+`PATCH /metrics/:id` **never** forks, and it accepts only `name`, `description`, `tags`,
+`userGroupIds`, and `specificationIds`. The refusal message names just the first three, so it reads
+as if the two link lists were blocked too.
 Anything else is refused. So a judge prompt, an evaluator model, or a scoring schema cannot be
 edited at all -- changing one means creating a revision.
 
