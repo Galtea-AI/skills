@@ -563,25 +563,32 @@ def ensure_session(cfg, hook):
 
 
 def create_session(cfg, hook):
-    """POST /sessions. When the customId is taken, this is a resumed session whose state
-    file is gone (pruned, or the plugin reinstalled): reuse it after its last turn.
+    """The session with this customId in the product, else a new one from POST /sessions.
+    A found session is a resumed one whose state file is gone; it continues after its last
+    turn. The lookup comes first because customId is unique per version only: once the
+    product has a newer version, POST /sessions succeeds and would split the conversation.
     Returns (session id, next turn index, metadata or None when unknown)."""
     key = hook["session_id"]
-    body = session_body(cfg, key, hook.get("cwd"))
     try:
+        found = find_sessions(cfg, key)
+    except Exception:
+        log_exc("session lookup failed for %s; creating it" % key)
+        found = []
+    if not found:
+        body = session_body(cfg, key, hook.get("cwd"))
         return api(cfg, "POST", "/sessions", body)["id"], 0, body["metadata"]
-    except ApiError as e:
-        if e.status != 400:
-            raise
-        q = urllib.parse.quote
-        found = items(api(cfg, "GET", "/sessions?customIds=%s&productIds=%s" % (q(key), q(cfg["product_id"]))))
-        if not found:
-            raise
     sid = max(found, key=lambda x: x.get("createdAt") or "")["id"]
     turns = items(api(cfg, "GET", "/inferenceResults?sessionIds=%s" % urllib.parse.quote(sid)))
     next_index = max([len(turns)] + [t["index"] + 1 for t in turns if isinstance(t.get("index"), int)])
     log("session %s already exists in Galtea; continuing it at turn %d" % (sid, next_index))
     return sid, next_index, None
+
+
+def find_sessions(cfg, custom_id, timeout=None):
+    q = urllib.parse.quote
+    res = api(cfg, "GET", "/sessions?customIds=%s&productIds=%s" % (q(custom_id), q(cfg["product_id"])),
+              timeout=timeout)
+    return [s for s in items(res) if isinstance(s, dict) and s.get("customId") == custom_id]
 
 
 def post_turn(cfg, sid, index, pending, hook):
