@@ -967,6 +967,16 @@ class TestConcurrency(Base):
         with gc.State("s1") as st:
             self.assertEqual([p["prompt"] for p in st["prompts"]],
                              ["p%d" % i for i in range(5, gc.PENDING_MAX + 5)])
+        with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+            self.assertEqual(f.read().count("session s1 dropped its oldest unsent prompt"), 5)
+
+    def test_a_stop_with_no_stored_prompt_is_logged(self):
+        self.use_api(FakeApi(ok_responses()))
+        self.run_hook("Stop", last_assistant_message="ok", stop_hook_active=True)
+        self.assertFalse(os.path.exists(os.path.join(self.data, "hook.log")))
+        self.run_hook("Stop", last_assistant_message="ok", stop_hook_active=False)
+        with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+            self.assertIn("Stop of session s1 has no stored prompt", f.read())
 
     def test_a_refused_turn_is_logged_and_frees_its_index(self):
         err = gc.ApiError("POST", "/inferenceResults", 400, b"bad")

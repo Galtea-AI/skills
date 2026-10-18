@@ -699,7 +699,11 @@ def on_prompt(cfg, hook):
         # one entry per prompt: a queued prompt's hook can run before the previous turn's Stop
         prompts = [p for p in st.get("prompts", []) if pid is None or p.get("prompt_id") != pid]
         prompts.append({"prompt": hook.get("prompt", ""), "ts": time.time(), "prompt_id": pid})
+        dropped = len(prompts) - PENDING_MAX
         st["prompts"] = prompts[-PENDING_MAX:]
+    if dropped > 0:
+        log("session %s dropped its oldest unsent prompt: more than %d prompts got no Stop"
+            % (hook["session_id"], PENDING_MAX))
 
 
 def take_prompt(st, prompt_id):
@@ -720,9 +724,15 @@ def on_stop(cfg, hook):
     token = uuid.uuid4().hex
     with State(key) as st:
         pending = take_prompt(st, hook.get("prompt_id"))
-        if not pending or muted:
-            return  # muted, or Stop re-fired (e.g. after a blocking Stop hook) with no new prompt
-        st.setdefault("inflight", {})[token] = time.time()  # SessionEnd waits for it
+        if pending and not muted:
+            st.setdefault("inflight", {})[token] = time.time()  # SessionEnd waits for it
+    if muted:
+        return
+    if not pending:
+        # a Stop re-fired by a blocking Stop hook has stop_hook_active set and no new prompt
+        if not hook.get("stop_hook_active"):
+            log("Stop of session %s has no stored prompt; its turn is not sent" % key)
+        return
     try:
         send_turn(cfg, hook, pending)
     finally:
