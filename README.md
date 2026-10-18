@@ -9,6 +9,21 @@
 | [galtea](./skills/galtea) | Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, datasets, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions, traces, and spans. |
 | [galtea-loop](./skills/galtea-loop) | Run the full Galtea improvement loop for an AI product: define specs, generate test cases, evaluate the product against them, then iterate the product and specs based on what failed. Vendor-neutral; drives Galtea via the CLI or the Python SDK. |
 
+## Plugins
+
+| Plugin | Description |
+|---|---|
+| [galtea-tracing](./plugins/galtea-tracing) | Send each Claude Code conversation to Galtea as a production session, with its model calls, tool calls and subagents as traces. Secret redaction is on by default and best-effort. |
+
+Install it from the same marketplace as the skills:
+
+```
+/plugin marketplace add Galtea-AI/skills
+/plugin install galtea-tracing@galtea
+```
+
+The install dialog asks for your API key and the product that receives the sessions. See the [plugin README](./plugins/galtea-tracing/README.md) for what it sends and how to mute it.
+
 ## Installation
 
 ### Claude Code Plugin

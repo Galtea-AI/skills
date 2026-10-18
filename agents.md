@@ -9,6 +9,12 @@ This repository ships [Agent Skills](https://agentskills.io) for the [Galtea](ht
 | [`galtea`](./skills/galtea/) | Interact with the Galtea Platform API: authenticate, manage products/versions/datasets/metrics/endpoint-connections, run and monitor evaluations, inspect sessions, traces, and spans. |
 | [`galtea-loop`](./skills/galtea-loop/) | Orchestrate the end-to-end Galtea improvement loop for an AI product: define specs, generate datasets, evaluate, iterate. Vendor-neutral; composes the `galtea` skill for CLI/SDK mechanics. |
 
+## Plugins
+
+| Plugin | Purpose |
+|---|---|
+| [`galtea-tracing`](./plugins/galtea-tracing/) | Claude Code plugin with hooks, not a skill. It sends each conversation to Galtea as a production session with traces. Its code is `scripts/galtea_cc.py` (stdlib Python 3.9+), launched by `scripts/run.sh`. Its tests run with `python3 -m unittest discover plugins/galtea-tracing/tests`. |
+
 ## Entrypoint
 
 Each skill is a directory containing `SKILL.md`. Start reading from there — the frontmatter (`name`, `description`, `when_to_use`) is the skill's contract, and the markdown body is the playbook. Supporting material lives under `references/` and is loaded on demand.
