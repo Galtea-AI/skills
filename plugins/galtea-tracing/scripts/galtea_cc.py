@@ -51,7 +51,9 @@ SPAN_BATCH = 100
 MAX_SPAN_BYTES = 20000
 STATE_MAX_AGE = 7 * 24 * 3600
 WAIT = 40  # seconds a hook waits on another hook of its session: longer than one 30 s API call
-CHECK_BUDGET = 20  # seconds; the SessionStart hook times out at 30
+# seconds for the check's steps, then for the self-test cleanup; the SessionStart hook times out at 30
+CHECK_BUDGET = 20
+CLEANUP_BUDGET = 6
 MID_SESSION_SOURCES = ("clear", "compact", "fork")
 INFLIGHT_MAX = 600  # seconds after which a Stop hook that never cleared its entry counts as killed
 PENDING_MAX = 10  # unsent prompts kept per session: an interrupted turn gets no Stop to take its prompt
@@ -913,7 +915,8 @@ def selftest_transcript(path):
 
 def self_test(cfg):
     """A development session with one synthetic turn, checked and then deleted.
-    Never finished, so no monitor evaluates it. Returns (ok, detail)."""
+    Never finished, so no monitor evaluates it. Returns (ok, detail); a session left
+    behind fails the test."""
     tdir = tempfile.mkdtemp(prefix="galtea-cc-selftest-")
     custom_id = "galtea-cc-selftest-%d-%s" % (int(time.time()), uuid.uuid4().hex[:8])
     tpath = os.path.join(tdir, custom_id + ".jsonl")
@@ -928,27 +931,48 @@ def self_test(cfg):
         post_spans(cfg, hook, ir["id"], wait=0)
         irs = items(api(cfg, "GET", "/inferenceResults?sessionIds=%s" % sid))
         traces = items(api(cfg, "GET", "/traces?inferenceResultIds=%s" % ir["id"]))
-        ok = len(irs) == 1 and len(traces) >= 3
-        return ok, "turns=%d traces=%d" % (len(irs), len(traces))
+        ok, detail = len(irs) == 1 and len(traces) >= 3, "turns=%d traces=%d" % (len(irs), len(traces))
+    except Exception as e:
+        log_exc("check: selftest failed")
+        ok, detail = False, str(e)[:200]
     finally:
-        sids = [sid] if sid else []
-        if create_sent and not sid:
-            # the server can create the session and answer after our timeout
-            try:
-                sids = [x["id"] for x in find_sessions(cfg, custom_id, timeout=5)]
-            except Exception:
-                log_exc("selftest could not look up development session %s" % custom_id)
-        for s in sids:
-            try:
-                api(cfg, "DELETE", "/sessions/%s" % s, timeout=5)
-            except Exception:
-                log_exc("selftest could not delete development session %s" % s)
         shutil.rmtree(tdir, ignore_errors=True)
+    if not delete_selftest_session(cfg, custom_id, sid, create_sent):
+        return False, "%s; it could not clean up its development session %s, so delete it in Galtea" % (
+            detail, sid or custom_id)
+    return ok, detail
+
+
+def delete_selftest_session(cfg, custom_id, sid, create_sent):
+    """True when no self-test session is left. Each call gets only the time left
+    before cfg["cleanup_deadline"], so the check ends before the hook is killed."""
+    deadline = cfg.get("cleanup_deadline") or time.time() + CLEANUP_BUDGET
+    sids = [sid] if sid else []
+    if create_sent and not sid:
+        # the server can create the session and answer after our timeout
+        try:
+            if deadline - time.time() <= 0:
+                raise RuntimeError("out of time")
+            sids = [x["id"] for x in find_sessions(cfg, custom_id, timeout=deadline - time.time())]
+        except Exception:
+            log_exc("selftest could not look up development session %s" % custom_id)
+            return False
+    cleaned = True
+    for s in sids:
+        try:
+            if deadline - time.time() <= 0:
+                raise RuntimeError("out of time")
+            api(cfg, "DELETE", "/sessions/%s" % s, timeout=deadline - time.time())
+        except Exception:
+            log_exc("selftest could not delete development session %s" % s)
+            cleaned = False
+    return cleaned
 
 
 def run_check(cfg):
     """Returns (ok, message) for the SessionStart systemMessage."""
-    cfg = dict(cfg, deadline=time.time() + CHECK_BUDGET)
+    start = time.time()
+    cfg = dict(cfg, deadline=start + CHECK_BUDGET, cleanup_deadline=start + CHECK_BUDGET + CLEANUP_BUDGET)
     try:
         product = api(cfg, "GET", "/products/%s" % cfg["product_id"])
     except Exception as e:
@@ -967,11 +991,7 @@ def run_check(cfg):
                      "Set auto-close to ALL or PRODUCTION in the product settings." % scope)
     if not thinking_summaries_on():
         notes.append('Thinking is not logged. To log it, add "showThinkingSummaries": true to ~/.claude/settings.json.')
-    try:
-        ok, detail = self_test(cfg)
-    except Exception as e:
-        log_exc("check: selftest failed")
-        ok, detail = False, str(e)[:200]
+    ok, detail = self_test(cfg)
     if not ok:
         return False, "Galtea tracing self-test failed (%s). See %s." % (detail, data_path("hook.log"))
     minutes = product.get("autoCloseInactivityMinutes")

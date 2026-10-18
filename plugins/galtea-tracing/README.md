@@ -31,7 +31,7 @@ The first session after you install, or after you change the key, product or URL
 - It reads the product, to confirm the key and the product id.
 - It reads the product's auto-close setting.
 - It reads `showThinkingSummaries` in `~/.claude/settings.json`.
-- It runs a self-test. The self-test sends one synthetic turn to a **development** session, reads it back, and deletes it. It never closes that session, so no monitor evaluates it.
+- It runs a self-test. The self-test sends one synthetic turn to a **development** session, reads it back, and deletes it. It never closes that session, so no monitor evaluates it. If the delete fails, the check fails and the message names the session to delete by hand.
 
 An API key that does not start with `gsk_`, or that holds a space or a line break, is never sent: the session start message says the key is not valid, and nothing is logged to Galtea until you fix it.
 

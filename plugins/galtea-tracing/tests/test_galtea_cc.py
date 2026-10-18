@@ -58,11 +58,13 @@ class FakeApi:
 
     def __init__(self, responses=None, fail=None):
         self.calls = []
+        self.timeouts = []
         self.responses = responses or {}
         self.fail = fail or ()
 
     def __call__(self, cfg, method, path, body=None, timeout=None):
         self.calls.append((method, path, body))
+        self.timeouts.append(timeout)
         for m, prefix, *exc in self.fail:
             if m == method and path.startswith(prefix):
                 raise exc[0] if exc else RuntimeError("%s %s -> 500" % (method, path))
@@ -471,6 +473,52 @@ class TestCheck(Base):
         fake = self.use_api(FakeApi(responses, fail=[("POST", "/sessions", socket.timeout("timed out"))]))
         self.assertIn("self-test failed", self.start()["systemMessage"])
         self.assertEqual(fake.paths("DELETE"), ["/sessions/sess_late"])
+
+    def test_a_failed_cleanup_fails_the_check(self):
+        fake = self.use_api(FakeApi(ok_responses(), fail=[("DELETE", "/sessions/")]))
+        msg = self.start()["systemMessage"]
+        self.assertIn("could not clean up its development session sess_1", msg)
+        self.assertEqual(fake.paths("DELETE"), ["/sessions/sess_1"])
+        self.assertFalse(os.path.exists(os.path.join(self.data, "checked")))
+
+    def test_cleanup_ends_inside_the_hook_timeout(self):
+        # the SessionStart hook is killed at 30 s, so the cleanup gets only what is left of the budget
+        for spent, deletes in ((gc.CHECK_BUDGET + 4, 1), (30, 0)):
+            with self.subTest(spent=spent):
+                shutil.rmtree(self.data, True)
+                clock = [1000.0]
+
+                def slow(body):
+                    clock[0] = 1000.0 + spent  # the steps used up the time
+                    return [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+                responses = ok_responses()
+                responses[("GET", "/traces")] = slow
+                fake = self.use_api(FakeApi(responses))
+                with mock.patch.object(gc.time, "time", lambda: clock[0]):
+                    msg = self.start()["systemMessage"]
+                timeouts = [t for (m, p, b), t in zip(fake.calls, fake.timeouts) if m == "DELETE"]
+                self.assertEqual(len(timeouts), deletes)
+                for t in timeouts:
+                    self.assertTrue(0 < t and clock[0] + t <= 1000.0 + 28, t)
+                if not deletes:
+                    self.assertIn("could not clean up", msg)
+                    self.assertFalse(os.path.exists(os.path.join(self.data, "checked")))
+
+    def test_the_lookup_after_a_create_timeout_ends_inside_the_hook_timeout(self):
+        clock = [1000.0]
+
+        def late_create(body):
+            clock[0] = 1000.0 + gc.CHECK_BUDGET + 4
+            raise socket.timeout("timed out")
+        responses = ok_responses()
+        responses[("POST", "/sessions")] = late_create
+        responses[("GET", "/sessions")] = []
+        fake = self.use_api(FakeApi(responses))
+        with mock.patch.object(gc.time, "time", lambda: clock[0]):
+            self.start()
+        lookup = [t for (m, p, b), t in zip(fake.calls, fake.timeouts) if (m, p[:10]) == ("GET", "/sessions?")]
+        self.assertEqual(len(lookup), 1)
+        self.assertTrue(0 < lookup[0] and clock[0] + lookup[0] <= 1000.0 + 28, lookup[0])
 
     def test_self_test_fails_on_too_few_traces(self):
         responses = ok_responses()
