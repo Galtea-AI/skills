@@ -561,6 +561,20 @@ class TestCheck(Base):
                 REAL_API(gc.load_config(), "GET", "/products/p")
         self.assertEqual(ctx.exception.status, 401)
 
+    def test_a_refused_key_in_any_hook_runs_the_check_again(self):
+        marker = os.path.join(self.data, "checked")
+        for status, kept in ((401, False), (403, False), (404, True), (500, True)):
+            with self.subTest(status=status):
+                os.makedirs(self.data, exist_ok=True)
+                with open(marker, "w") as f:
+                    f.write(gc.fingerprint(gc.load_config()))
+                self.use_api(REAL_API)
+                err = urllib.error.HTTPError("http://x/sessions", status, "no", {}, io.BytesIO(b"no"))
+                with mock.patch.object(gc.urllib.request, "urlopen", side_effect=err):
+                    self.run_hook("UserPromptSubmit", prompt="hi")
+                    self.run_hook("Stop", last_assistant_message="ok")
+                self.assertEqual(os.path.exists(marker), kept)
+
     def test_unreachable_galtea_is_not_called_refused(self):
         for err in (urllib.error.URLError("Name or service not known"), socket.timeout("timed out"),
                     gc.ApiError("GET", "/products/prod_1", 502, b"bad gateway")):

@@ -148,12 +148,21 @@ def api(cfg, method, path, body=None, timeout=None):
             raw = r.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            forget_check()  # the next session start runs the check and shows the user the problem
         raise ApiError(method, path, e.code, e.read())
     except OSError:  # URLError, a timeout, a reset: their messages never hold the request headers
         raise
     except Exception as e:
         # an error raised while building the request can repeat the Authorization header
         raise RuntimeError("%s %s -> request failed (%s)" % (method, path, type(e).__name__)) from None
+
+
+def forget_check():
+    try:
+        os.remove(data_path("checked"))
+    except OSError:
+        pass
 
 
 def items(res):
