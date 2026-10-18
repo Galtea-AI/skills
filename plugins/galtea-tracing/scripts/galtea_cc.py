@@ -470,22 +470,33 @@ def build_spans(lines, ir_id, cfg, parent_id, subagent_dir, totals, depth=0):
                 "latencyMs": ms_between(t["start"], t["end"]) if t.get("end") else None,
             })
             if is_agent and t.get("agent_id") and depth < 3:
-                sub = [d for d in read_jsonl(os.path.join(subagent_dir, "agent-%s.jsonl" % t["agent_id"]))
-                       if d.get("type") in ("user", "assistant")]
+                sub_path = os.path.join(subagent_dir, "agent-%s.jsonl" % t["agent_id"])
+                if not os.path.isfile(sub_path):
+                    log("subagent transcript %s missing; its spans are lost" % os.path.basename(sub_path))
+                sub = [d for d in read_jsonl(sub_path) if d.get("type") in ("user", "assistant")]
                 out.extend(build_spans(sub, ir_id, cfg, t["id"], subagent_dir, totals, depth + 1))
     # Galtea rejects null parents only if referenced; drop empty keys for clean payloads
     return [{k: v for k, v in s.items() if v is not None} for s in out]
 
 
 def log_spans(cfg, hook, ir_id, wait=1.5):
-    path = hook.get("transcript_path")
+    """Each case that loses the turn's spans writes one log line, never transcript content."""
+    key, pid, path = hook["session_id"], hook.get("prompt_id"), hook.get("transcript_path")
     if not path:
+        log("no transcript path for session %s; turn %s has no spans" % (key, ir_id))
         return None
     time.sleep(wait)  # let Claude Code flush the final transcript lines
-    lines = turn_lines(read_jsonl(path), hook.get("prompt_id"))
-    if not lines:
+    if not os.path.isfile(path):
+        log("transcript file missing for session %s; turn %s has no spans" % (key, ir_id))
         return None
-    subagent_dir = os.path.join(os.path.dirname(path), hook["session_id"], "subagents")
+    all_lines = read_jsonl(path)
+    if pid and not any(d.get("promptId") == pid and is_prompt_line(d) for d in all_lines):
+        log("prompt %s is not in the transcript of session %s; using its last prompt" % (pid, key))
+    lines = turn_lines(all_lines, pid)
+    if not lines:
+        log("no transcript lines match turn %s of session %s; it has no spans" % (ir_id, key))
+        return None
+    subagent_dir = os.path.join(os.path.dirname(path), key, "subagents")
     totals = {}
     spans = build_spans(lines, ir_id, cfg, None, subagent_dir, totals)
     for i in range(0, len(spans), SPAN_BATCH):

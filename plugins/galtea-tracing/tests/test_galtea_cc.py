@@ -227,6 +227,41 @@ class TestTurn(Base):
         self.assertEqual(fake.body("PATCH", "/inferenceResults/ir_1"),
                          {"inputTokens": 10, "outputTokens": 10, "cacheReadInputTokens": 0})
 
+    def hook_log(self):
+        with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_lost_spans_are_logged_without_content(self):
+        agent = [
+            {"type": "user", "promptId": "p1", "message": {"content": "SECRET_PROMPT_TEXT"}},
+            {"type": "assistant", "message": {"id": "m1", "content": [
+                {"type": "tool_use", "id": "t1", "name": "Agent", "input": {"prompt": "SECRET_AGENT_INPUT"}}]}},
+            {"type": "user", "promptId": "p1", "toolUseResult": {"agentId": "a1"},
+             "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "SECRET_RESULT"}]}},
+        ]
+        cases = {
+            "no transcript path": lambda: None,
+            "transcript file missing": lambda: os.path.join(self.tmp, "gone.jsonl"),
+            "no transcript lines match": lambda: self.transcript([{"type": "assistant", "message": {"content": []}}]),
+            "subagent transcript agent-a1.jsonl missing": lambda: self.transcript(agent),
+        }
+        for expected, make in cases.items():
+            with self.subTest(expected=expected):
+                path = make()
+                stop = {} if path is None else {"transcript_path": path}
+                self.use_api(FakeApi(ok_responses()))
+                with mock.patch.object(gc.time, "sleep"):
+                    self.run_hook("UserPromptSubmit", prompt="SECRET_PROMPT_TEXT")
+                    self.run_hook("Stop", last_assistant_message="ok", **stop)
+                log = self.hook_log()
+                self.assertIn(expected, log)
+                self.assertNotIn("SECRET_", log)
+
+    def test_an_unknown_prompt_id_is_logged(self):
+        path = self.transcript([{"type": "user", "promptId": "other", "message": {"content": "hi"}}])
+        self.run_turn(path)
+        self.assertIn("prompt p1 is not in the transcript", self.hook_log())
+
     def test_session_is_production_with_metadata(self):
         fake = self.run_turn(self.turn())
         body = fake.body("POST", "/sessions")

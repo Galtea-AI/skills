@@ -93,6 +93,8 @@ The plugin never stops or slows Claude Code because of an error. It writes each 
 ~/.claude/plugins/data/galtea-tracing-galtea/hook.log
 ```
 
+When a turn is sent without its traces, because the transcript or a subagent transcript is missing or holds no line for the turn, `hook.log` says so in one line. The log never holds transcript content.
+
 The same directory holds the mute list and a small state file per session. State files older than 7 days are deleted.
 
 ## Uninstall
