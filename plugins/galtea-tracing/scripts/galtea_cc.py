@@ -50,6 +50,7 @@ MAX_SPAN_BYTES = 20000
 STATE_MAX_AGE = 7 * 24 * 3600
 WAIT = 40  # seconds a hook waits on another hook of its session: longer than one 30 s API call
 CHECK_BUDGET = 20  # seconds; the SessionStart hook times out at 30
+MID_SESSION_SOURCES = ("clear", "compact", "fork")
 PENDING_GRACE = 5  # seconds SessionEnd waits for a Stop hook that has not started yet
 PENDING_MAX = 10  # unsent prompts kept per session: an interrupted turn gets no Stop to take its prompt
 SETTINGS_FILE = os.path.expanduser("~/.claude/settings.json")
@@ -857,7 +858,7 @@ def run_check(cfg):
             return False, ("Galtea tracing is not working: the API key or product id was refused (%s). "
                            "Fix them with /plugin, then start a new session." % str(e)[:200])
         return False, ("Galtea tracing could not reach Galtea at %s (%s). Sessions are not sent while it "
-                       "is unreachable. The check runs again at the next session start."
+                       "is unreachable. The check runs again when you next start or resume a session."
                        % (cfg["api_url"], str(e)[:200]))
     notes = []
     scope = product.get("autoCloseScope")
@@ -884,6 +885,9 @@ def run_check(cfg):
 def on_start(cfg, hook):
     if hook.get("source") == "startup":
         prune_state()
+    # SessionStart is synchronous: a check against a hanging host must not stall every /clear
+    if hook.get("source") in MID_SESSION_SOURCES:
+        return None
     fp = fingerprint(cfg)
     try:
         with open(data_path("checked"), encoding="utf-8") as f:

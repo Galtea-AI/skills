@@ -346,6 +346,15 @@ class TestCheck(Base):
         os.environ["CLAUDE_PLUGIN_OPTION_PRODUCT_ID"] = "prod_2"
         self.assertIsNotNone(self.start())
 
+    def test_check_skips_clear_compact_and_fork(self):
+        fake = self.use_api(FakeApi(ok_responses()))
+        for source in ("clear", "compact", "fork"):
+            with self.subTest(source=source):
+                self.assertIsNone(gc.hook_main(json.dumps(self.hook("SessionStart", source=source))))
+        self.assertEqual(fake.calls, [])
+        out = gc.hook_main(json.dumps(self.hook("SessionStart", source="resume")))
+        self.assertIn("Galtea tracing is on", out["systemMessage"])
+
     def test_refused_key_reports_and_retries(self):
         for status in (401, 403, 404):
             with self.subTest(status=status):
@@ -370,7 +379,7 @@ class TestCheck(Base):
                 msg = self.start()["systemMessage"]
                 self.assertNotIn("refused", msg)
                 self.assertIn("could not reach Galtea", msg)
-                self.assertIn("next session start", msg)
+                self.assertIn("next start or resume a session", msg)
                 self.assertFalse(os.path.exists(os.path.join(self.data, "checked")))
 
     def test_warns_on_auto_close_and_thinking_summaries(self):
