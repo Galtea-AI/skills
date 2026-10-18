@@ -436,10 +436,33 @@ class TestRedaction(unittest.TestCase):
                      "max_tokens=4096", "https://github.com/Galtea-AI/skills.git", "the token is useful",
                      "max_tokens=100000", "input_tokens = 123456", "TOKEN_LIMIT=4096000",
                      "disk-0123456789abcdef0123456789abcdef", "task-0123456789abcdef0123456789abcdef",
-                     "create(max_tokens=100000, model=x)", '{"max_tokens": "100000"}'):
+                     "create(max_tokens=100000, model=x)", '{"max_tokens": "100000"}',
+                     # a value that names a variable is code, not a secret
+                     "create(model=m, max_tokens=max_tokens)", "login(user, password=password)",
+                     "self.access_token = access_token", "if token==expected_token:",
+                     "api_key=settings.API_KEY", "password = get_password(user)", "max_tokens=100000.",
+                     # the keyword inside a longer word is not a secret name
+                     '{"tokenizer": "cl100k_base"}', "TOKENIZER_PATH=/models/cl100k_base"):
             with self.subTest(text=text):
                 self.assertEqual(gc.redact(text), text)
         self.assertEqual(gc.redact({"max_tokens": "100000"}), {"max_tokens": "100000"})
+        self.assertEqual(gc.redact({"tokenizer": "cl100k_base"}), {"tokenizer": "cl100k_base"})
+
+    def test_values_that_look_like_secrets_are_still_redacted(self):
+        r = gc.REDACTED
+        for text, out in (("f(password=hunter2pass, user=bob)", "f(password=%s, user=bob)" % r),
+                          ("connect(token=abcdef123456)", "connect(token=%s)" % r),
+                          ("PASSWORD=hunter2pass.", "PASSWORD=%s." % r),
+                          ("PASSWORD=ab;cdefgh", "PASSWORD=%s" % r),
+                          ("PASSWORD=MyPassword123!", "PASSWORD=%s" % r),
+                          ("PASSWORD=Password123", "PASSWORD=%s" % r),
+                          ('password="password"', 'password="%s"' % r),
+                          ("secretKey=abcdef123456", "secretKey=%s" % r),
+                          ('{"accessToken": "abcdef123456"}', '{"accessToken": "%s"}' % r),
+                          ("GITHUB_TOKENS=abcdef123456", "GITHUB_TOKENS=%s" % r)):
+            with self.subTest(text=text):
+                self.assertEqual(gc.redact(text), out)
+        self.assertEqual(gc.redact({"clientSecret": "abcdef123456"}), {"clientSecret": r})
 
     def test_a_number_prefix_does_not_save_a_secret(self):
         self.assertEqual(gc.redact("GITHUB_TOKEN=123456abcdef"), "GITHUB_TOKEN=" + gc.REDACTED)

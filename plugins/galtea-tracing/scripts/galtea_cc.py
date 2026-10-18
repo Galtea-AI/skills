@@ -218,9 +218,29 @@ def prune_state():
 
 # --- redaction -------------------------------------------------------------
 
-_NAME = r"[\w.-]{0,64}?(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)[\w.-]{0,64}?"
+_KEYWORD = r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)"
+# The keyword ends a word or a camelCase part: max_tokens and clientSecret are names, tokenizer is not.
+_NAME = r"[\w.-]{0,64}?" + _KEYWORD + r"(?:s?(?![a-z])|(?-i:(?<=[a-z])(?=[A-Z])))[\w.-]{0,64}?"
 # A value of digits only is a count or a limit (max_tokens=100000), never a secret.
-_NOT_A_NUMBER = r"(?!\d+(?:[\s\"'`,;)\]}]|$))"
+_NOT_A_NUMBER = r"(?!\d+(?:[\s\"'`,;:.)\]}]|$))"
+# An unquoted value never ends in punctuation that closes a call, a list or a sentence.
+_VALUE = r"([^\s\"'`]{5,}[^\s\"'`),;:.\]}])"
+_CODE_REF = re.compile(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\(.*)?")
+_KEYWORD_RX = re.compile(r"(?i)" + _KEYWORD)
+
+
+def _assignment(m):
+    """NAME=value with the value masked, unless it is unquoted code that names a
+    secret-named variable (password=password, max_tokens=max_tokens, settings.API_KEY).
+    A mixed-case word with no `_` or `.`, such as MyPassword, reads as a password."""
+    name, eq, quote, value = m.groups()
+    ref = None if quote else _CODE_REF.fullmatch(value)
+    ident = ref.group(1) if ref else ""
+    if _KEYWORD_RX.search(ident) and (ident.islower() or "_" in ident or "." in ident):
+        return m.group(0)
+    return name + eq + quote + REDACTED
+
+
 # (name, pattern, replacement). Each pattern is anchored by a literal prefix or a
 # lookbehind so a long run that fails to match costs one scan, not one per offset.
 RULES = [
@@ -241,8 +261,8 @@ RULES = [
     ("bearer", re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1" + REDACTED),
     ("url_password", re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^\s:/@\"']{1,256}:)[^\s/@\"']{1,256}(@)"),
      r"\1" + REDACTED + r"\2"),
-    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=\s*)([\"']?)" + _NOT_A_NUMBER + r"[^\s\"'`]{6,}"),
-     r"\1\2\3" + REDACTED),
+    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=(?!=)\s*)([\"']?)" + _NOT_A_NUMBER + _VALUE),
+     _assignment),
     ("json_field", re.compile(r"(?i)(\"" + _NAME + r"\"\s*:\s*\")" + _NOT_A_NUMBER + r"(?:[^\"\\]|\\.){6,}(\")"),
      r"\1" + REDACTED + r"\2"),
 ]

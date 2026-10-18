@@ -57,7 +57,7 @@ It masks these values with `[REDACTED]` in prompts, replies, and every trace inp
 - JSON Web Tokens and PEM private key blocks.
 - The value of `Authorization:` and `x-api-key:` headers, and of a bare `Bearer` token.
 - The password in a URL such as `postgres://user:password@host`.
-- The value of a variable or JSON field whose name contains `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY` or `ACCESS_KEY`. The name stays. A value of digits only, such as `max_tokens=100000`, is kept.
+- The value of a variable or JSON field whose name contains `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY` or `ACCESS_KEY`. The keyword must end a word or a camelCase part, so `clientSecret` counts and `tokenizer` does not. The name stays. Two values are kept: digits only, such as `max_tokens=100000`, and code that names another such variable, such as `password=password` or `max_tokens=max_tokens)`.
 
 If redaction fails on a field, that field is sent as `[REDACTION FAILED]`, never as the raw text. Turn redaction off in the plugin options only if you are sure your sessions hold no secrets.
 
