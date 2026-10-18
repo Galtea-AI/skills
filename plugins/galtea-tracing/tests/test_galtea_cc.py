@@ -694,6 +694,41 @@ class TestConcurrency(Base):
         stop.join(5)
         self.assertEqual(done, ["turn", "finish"])
 
+    def sent_turns(self, fake):
+        return [(b["input"]["user_message"], b["actualOutput"], b["index"])
+                for m, p, b in fake.calls if m == "POST" and p == "/inferenceResults"]
+
+    def test_a_queued_prompt_keeps_each_turn_with_its_own_prompt(self):
+        # a queued prompt's hook can take the state lock before the previous turn's Stop
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="ONE", prompt_id="p1")
+            self.run_hook("UserPromptSubmit", prompt="TWO", prompt_id="p2")
+            self.run_hook("Stop", prompt_id="p1", last_assistant_message="reply one")
+            self.run_hook("Stop", prompt_id="p2", last_assistant_message="reply two")
+        self.assertEqual(self.sent_turns(fake), [("ONE", "reply one", 0), ("TWO", "reply two", 1)])
+
+    def test_without_prompt_ids_each_stop_takes_the_oldest_prompt(self):
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="ONE", prompt_id=None)
+            self.run_hook("UserPromptSubmit", prompt="TWO", prompt_id=None)
+            self.run_hook("Stop", prompt_id=None, last_assistant_message="reply one")
+            self.run_hook("Stop", prompt_id=None, last_assistant_message="reply two")
+            self.run_hook("UserPromptSubmit", prompt="THREE", prompt_id=None)
+            self.run_hook("Stop", prompt_id="p3", last_assistant_message="reply three")
+        self.assertEqual(self.sent_turns(fake), [("ONE", "reply one", 0), ("TWO", "reply two", 1),
+                                                 ("THREE", "reply three", 2)])
+
+    def test_unsent_prompts_are_bounded(self):
+        # an interrupted turn gets no Stop, so its prompt is never taken
+        self.use_api(FakeApi(ok_responses()))
+        for i in range(gc.PENDING_MAX + 5):
+            self.run_hook("UserPromptSubmit", prompt="p%d" % i, prompt_id="p%d" % i)
+        with gc.State("s1") as st:
+            self.assertEqual([p["prompt"] for p in st["prompts"]],
+                             ["p%d" % i for i in range(5, gc.PENDING_MAX + 5)])
+
     def test_a_failed_turn_is_logged_and_frees_its_index(self):
         self.use_api(FakeApi(ok_responses(), fail=[("POST", "/inferenceResults")]))
         gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="hi")))

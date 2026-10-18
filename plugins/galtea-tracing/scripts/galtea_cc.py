@@ -50,6 +50,7 @@ MAX_SPAN_BYTES = 20000
 STATE_MAX_AGE = 7 * 24 * 3600
 WAIT = 40  # seconds a hook waits on another hook of its session: longer than one 30 s API call
 CHECK_BUDGET = 20  # seconds; the SessionStart hook times out at 30
+PENDING_MAX = 10  # unsent prompts kept per session: an interrupted turn gets no Stop to take its prompt
 SETTINGS_FILE = os.path.expanduser("~/.claude/settings.json")
 REDACTED = "[REDACTED]"
 
@@ -610,10 +611,25 @@ def post_spans(cfg, hook, ir_id, wait=1.5):
 def on_prompt(cfg, hook):
     if is_muted(hook.get("cwd")):
         return
+    pid = hook.get("prompt_id")
     with State(hook["session_id"]) as st:
-        st["pending"] = {"prompt": hook.get("prompt", ""), "ts": time.time(),
-                         "prompt_id": hook.get("prompt_id")}
+        # one entry per prompt: a queued prompt's hook can run before the previous turn's Stop
+        prompts = [p for p in st.get("prompts", []) if pid is None or p.get("prompt_id") != pid]
+        prompts.append({"prompt": hook.get("prompt", ""), "ts": time.time(), "prompt_id": pid})
+        st["prompts"] = prompts[-PENDING_MAX:]
     ensure_session(cfg, hook)
+
+
+def take_prompt(st, prompt_id):
+    """Remove and return this Stop's prompt: the one with its prompt_id, else the oldest
+    prompt stored without an id. With no prompt_id on the Stop, the oldest prompt."""
+    prompts = st.get("prompts", [])
+    ids = [p.get("prompt_id") for p in prompts]
+    if prompt_id is None:
+        i = 0 if prompts else None
+    else:
+        i = ids.index(prompt_id) if prompt_id in ids else (ids.index(None) if None in ids else None)
+    return None if i is None else prompts.pop(i)
 
 
 def on_stop(cfg, hook):
@@ -621,7 +637,7 @@ def on_stop(cfg, hook):
     muted = is_muted(hook.get("cwd"))
     token = uuid.uuid4().hex
     with State(key) as st:
-        pending = st.pop("pending", None)
+        pending = take_prompt(st, hook.get("prompt_id"))
         if not pending or muted:
             return  # muted, or Stop re-fired (e.g. after a blocking Stop hook) with no new prompt
         st.setdefault("inflight", {})[token] = time.time()  # SessionEnd waits for it
