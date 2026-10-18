@@ -40,11 +40,12 @@ When the check fails, it runs again at the next session start. It says the key o
 One Claude Code session becomes one Galtea session. Its `customId` is the Claude Code session id.
 
 - **Session metadata:** the working directory, your user name, the plugin version, and the git remote, branch and commit. The git values are left out outside a repository. A remote URL never carries its user name or password.
+- **Session title:** the session name, in metadata as `title`. `title_source` is `custom` for a name you set with `/rename`, which wins, or `ai` for the name Claude Code generated. It is sent after a turn or at session end, only when it changed, and redacted like other text.
 - **Each turn:** your prompt, Claude's final reply, the latency, and the input, output and cache-read token counts.
 - **Traces of each turn:** each model call with its thinking summary, text and tool names; each tool call with its input and output; each subagent with its own steps nested below it. A trace field is cut at 20 KB.
 - `claude -p` runs are not logged. Claude Code stops their hooks before the turn can be sent.
 
-The plugin reads the session transcript file to build the traces. Anthropic documents that format as internal. If it changes, the turn is still sent and only the traces are lost.
+The plugin reads the session transcript file to build the traces. Anthropic documents that format as internal. If it changes, the turn is still sent and only the traces and the title are lost.
 
 ## Redaction
 

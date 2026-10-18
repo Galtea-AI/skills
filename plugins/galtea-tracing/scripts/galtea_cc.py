@@ -6,8 +6,10 @@ Run by the galtea-tracing plugin through scripts/run.sh:
                        auto-close, thinking summaries, and run a self-test
   hook UserPromptSubmit -> remember the prompt, ensure the Galtea session exists
   hook Stop         -> POST /inferenceResults (prompt + final assistant reply),
-                       then POST /traces/batch with the turn's steps
-  hook SessionEnd   -> PATCH /sessions/{id}/finish so Monitors score it
+                       then POST /traces/batch with the turn's steps, then the
+                       session title to metadata when it changed
+  hook SessionEnd   -> the session title, then PATCH /sessions/{id}/finish so
+                       Monitors score it
   mute [data_dir]   -> stop logging for the current repository
   unmute [data_dir] -> start logging again
 
@@ -544,7 +546,7 @@ def ensure_session(cfg, hook):
                 break
         time.sleep(0.1)
     try:
-        sid, next_index = create_session(cfg, hook)
+        sid, next_index, meta = create_session(cfg, hook)
     except Exception:
         with State(key) as st:
             st.pop("creating", None)
@@ -553,16 +555,19 @@ def ensure_session(cfg, hook):
         st.pop("creating", None)
         st["galtea_session_id"] = sid
         st["index"] = max(st["index"], next_index)
+        if meta is not None:
+            st["metadata"] = meta
     return sid
 
 
 def create_session(cfg, hook):
     """POST /sessions. When the customId is taken, this is a resumed session whose state
     file is gone (pruned, or the plugin reinstalled): reuse it after its last turn.
-    Returns (session id, next turn index)."""
+    Returns (session id, next turn index, metadata or None when unknown)."""
     key = hook["session_id"]
+    body = session_body(cfg, key, hook.get("cwd"))
     try:
-        return api(cfg, "POST", "/sessions", session_body(cfg, key, hook.get("cwd")))["id"], 0
+        return api(cfg, "POST", "/sessions", body)["id"], 0, body["metadata"]
     except ApiError as e:
         if e.status != 400:
             raise
@@ -574,7 +579,7 @@ def create_session(cfg, hook):
     turns = items(api(cfg, "GET", "/inferenceResults?sessionIds=%s" % urllib.parse.quote(sid)))
     next_index = max([len(turns)] + [t["index"] + 1 for t in turns if isinstance(t.get("index"), int)])
     log("session %s already exists in Galtea; continuing it at turn %d" % (sid, next_index))
-    return sid, next_index
+    return sid, next_index, None
 
 
 def post_turn(cfg, sid, index, pending, hook):
@@ -647,10 +652,62 @@ def send_turn(cfg, hook, pending):
         st.pop("finished", None)  # a resumed session was reopened by this turn
     hook["prompt_id"] = hook.get("prompt_id") or pending.get("prompt_id")
     post_spans(cfg, hook, ir["id"])
+    sync_title(cfg, hook)
 
 
-def on_end(cfg, hook):
+def read_title(path):
+    """(title, "custom" | "ai") from the transcript: the newest /rename title, else the
+    newest title Claude Code generated. None when the transcript has neither."""
+    newest = {}
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"custom-title"' not in line and '"ai-title"' not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                for kind, field, source in (("custom-title", "customTitle", "custom"), ("ai-title", "aiTitle", "ai")):
+                    if d.get("type") == kind and isinstance(d.get(field), str) and d[field].strip():
+                        newest[source] = d[field].strip()
+    except FileNotFoundError:
+        return None
+    for source in ("custom", "ai"):
+        if source in newest:
+            return newest[source], source
+    return None
+
+
+def sync_title(cfg, hook):
+    """Send the session title when it changed. PATCH /sessions/{id} replaces `metadata`
+    as a whole, so the body carries every key the session already has.
+    A failure is logged and never blocks the turn."""
     key = hook["session_id"]
+    try:
+        found = read_title(hook.get("transcript_path"))
+        if not found:
+            return
+        sent = [clean(cfg, found[0]), found[1]]
+        with State(key) as st:
+            sid, meta, last = st.get("galtea_session_id"), st.get("metadata"), st.get("title_sent")
+        if not sid or last == sent:
+            return
+        if meta is None:  # a session found again after its state was lost, or made by an older plugin
+            meta = api(cfg, "GET", "/sessions/%s" % sid).get("metadata")
+            meta = meta if isinstance(meta, dict) else {}
+        meta = dict(meta, title=sent[0], title_source=sent[1])
+        api(cfg, "PATCH", "/sessions/%s" % sid, {"metadata": meta})
+        with State(key) as st:
+            st["metadata"], st["title_sent"] = meta, sent
+    except Exception:
+        log_exc("title not sent for session %s" % key)
+
+
+def wait_for_turns(key):
+    """Wait until no Stop hook of the session is still sending its turn."""
     deadline = time.time() + WAIT
     while True:
         with State(key) as st:
@@ -658,12 +715,20 @@ def on_end(cfg, hook):
             # a Stop hook killed mid-turn never clears its entry, so an old one is ignored
             st["inflight"] = {t: ts for t, ts in st.get("inflight", {}).items() if now - ts < WAIT}
             if not st["inflight"] or now > deadline:
-                sid = st.get("galtea_session_id")
-                if not sid or st["index"] == 0 or st.get("finished"):
-                    return
-                st["finished"] = True
-                break
+                return
         time.sleep(0.1)
+
+
+def on_end(cfg, hook):
+    key = hook["session_id"]
+    wait_for_turns(key)
+    if not is_muted(hook.get("cwd")):
+        sync_title(cfg, hook)
+    with State(key) as st:
+        sid = st.get("galtea_session_id")
+        if not sid or st["index"] == 0 or st.get("finished"):
+            return
+        st["finished"] = True
     try:
         api(cfg, "PATCH", "/sessions/%s/finish" % sid,
             {"stoppingReason": "claude_code:%s" % hook.get("reason", "other")})

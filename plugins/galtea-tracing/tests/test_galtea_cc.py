@@ -502,6 +502,97 @@ class TestResume(Base):
         self.assertEqual(fake.paths("GET"), [])
 
 
+class TestTitle(Base):
+    """The Claude Code session name goes to session metadata as `title` and `title_source`."""
+
+    def lines(self, *titles):
+        out = [{"type": "user", "promptId": "p1", "message": {"content": "hi"}}]
+        for kind, text in titles:
+            key = "customTitle" if kind == "custom-title" else "aiTitle"
+            out.append({"type": kind, key: text, "sessionId": "s1"})
+        return out
+
+    def turn_with(self, fake_responses, path, **stop):
+        fake = self.use_api(FakeApi(fake_responses))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="ok", **stop)
+        return fake
+
+    @staticmethod
+    def title_patches(fake):
+        return [b["metadata"] for m, p, b in fake.calls if m == "PATCH" and p == "/sessions/sess_1"]
+
+    def test_custom_title_is_sent_with_the_full_metadata(self):
+        path = self.transcript(self.lines(("ai-title", "Auto name"), ("custom-title", "Old"),
+                                          ("custom-title", "Fix the login bug")))
+        fake = self.turn_with(ok_responses(), path)
+        created = fake.body("POST", "/sessions")["metadata"]
+        self.assertEqual(self.title_patches(fake),
+                         [dict(created, title="Fix the login bug", title_source="custom")])
+        self.assertEqual(created["plugin_version"], "0.1.0")
+
+    def test_ai_title_is_the_fallback(self):
+        path = self.transcript(self.lines(("ai-title", "First guess"), ("ai-title", "Refactor the parser")))
+        fake = self.turn_with(ok_responses(), path)
+        meta = self.title_patches(fake)[0]
+        self.assertEqual((meta["title"], meta["title_source"]), ("Refactor the parser", "ai"))
+
+    def test_no_title_sends_nothing(self):
+        fake = self.turn_with(ok_responses(), self.transcript(self.lines()))
+        self.assertEqual(self.title_patches(fake), [])
+
+    def test_title_is_sent_again_only_when_it_changes(self):
+        path = self.transcript(self.lines(("custom-title", "Fix the login bug")))
+        fake = self.turn_with(ok_responses(), path)
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="again")
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="ok")
+        self.assertEqual(len(self.title_patches(fake)), 1)
+        with open(path, "a", encoding="utf-8") as f:  # /rename after the last turn
+            f.write(json.dumps({"type": "custom-title", "customTitle": "Login fixed", "sessionId": "s1"}) + "\n")
+        self.run_hook("SessionEnd", reason="other", transcript_path=path)
+        self.assertEqual([m["title"] for m in self.title_patches(fake)], ["Fix the login bug", "Login fixed"])
+        self.assertEqual(self.title_patches(fake)[1]["plugin_version"], "0.1.0")
+        paths = fake.paths("PATCH")
+        self.assertLess(paths.index("/sessions/sess_1"), paths.index("/sessions/sess_1/finish"))
+
+    def test_title_is_redacted(self):
+        path = self.transcript(self.lines(("custom-title", "debug gsk_" + "k" * 30)))
+        fake = self.turn_with(ok_responses(), path)
+        self.assertEqual(self.title_patches(fake)[0]["title"], "debug " + gc.REDACTED)
+
+    def test_resumed_session_keeps_its_stored_metadata(self):
+        responses = ok_responses()
+        responses = dict([(("GET", "/sessions/sess_old"), {"id": "sess_old", "metadata": {
+            "git_branch": "feature", "plugin_version": "0.0.9"}}),
+            (("GET", "/sessions"), [{"id": "sess_old"}])] + list(responses.items()))
+        collision = gc.ApiError("POST", "/sessions", 400, b"already exists")
+        fake = self.use_api(FakeApi(responses, fail=[("POST", "/sessions", collision)]))
+        path = self.transcript(self.lines(("custom-title", "Resumed work")))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="ok")
+        patches = [b["metadata"] for m, p, b in fake.calls if m == "PATCH" and p == "/sessions/sess_old"]
+        self.assertEqual(patches, [{"git_branch": "feature", "plugin_version": "0.0.9",
+                                    "title": "Resumed work", "title_source": "custom"}])
+
+    def test_a_title_failure_never_blocks_the_turn(self):
+        def patch(body):
+            if "metadata" in body:
+                raise RuntimeError("PATCH /sessions/sess_1 -> 500")
+            return {}
+        responses = ok_responses()
+        responses[("PATCH", "/sessions/sess_1")] = patch
+        path = self.transcript(self.lines(("custom-title", "Fix the login bug")))
+        fake = self.turn_with(responses, path)
+        self.run_hook("SessionEnd", reason="other", transcript_path=path)
+        self.assertIn("/inferenceResults", fake.paths("POST"))
+        self.assertIn("/sessions/sess_1/finish", fake.paths("PATCH"))
+        with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+            self.assertIn("title not sent for session s1", f.read())
+
+
 class TestConcurrency(Base):
     """Async hooks of one session run at the same time. The state lock is held only
     around state reads and writes, never across an API call."""
