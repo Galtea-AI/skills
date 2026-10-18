@@ -33,7 +33,7 @@ The first session after you install, or after you change the key, product or URL
 - It reads `showThinkingSummaries` in `~/.claude/settings.json`.
 - It runs a self-test. The self-test sends one synthetic turn to a **development** session, reads it back, and deletes it. It never closes that session, so no monitor evaluates it.
 
-When the check fails, it runs again at the next session start.
+When the check fails, it runs again at the next session start. It says the key or product id was refused only when Galtea answers 401, 403 or 404. Any other failure is reported as Galtea being unreachable.
 
 ## What is sent
 

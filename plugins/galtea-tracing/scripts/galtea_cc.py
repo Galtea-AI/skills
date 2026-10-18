@@ -93,6 +93,13 @@ def plugin_version():
         return None
 
 
+class ApiError(RuntimeError):
+    def __init__(self, method, path, status, body):
+        super().__init__("%s %s -> %s %s" % (method, path, status, body[:500]))
+        self.status = status
+        self.body = body
+
+
 def api(cfg, method, path, body=None, timeout=None):
     if timeout is None:
         timeout = 30
@@ -111,7 +118,7 @@ def api(cfg, method, path, body=None, timeout=None):
             raw = r.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
-        raise RuntimeError("%s %s -> %s %s" % (method, path, e.code, e.read()[:500]))
+        raise ApiError(method, path, e.code, e.read())
 
 
 def items(res):
@@ -640,8 +647,12 @@ def run_check(cfg):
         product = api(cfg, "GET", "/products/%s" % cfg["product_id"])
     except Exception as e:
         log_exc("check: product lookup failed")
-        return False, ("Galtea tracing is not working: the API key or product id was refused (%s). "
-                       "Fix them with /plugin, then start a new session." % str(e)[:200])
+        if isinstance(e, ApiError) and e.status in (401, 403, 404):
+            return False, ("Galtea tracing is not working: the API key or product id was refused (%s). "
+                           "Fix them with /plugin, then start a new session." % str(e)[:200])
+        return False, ("Galtea tracing could not reach Galtea at %s (%s). Sessions are not sent while it "
+                       "is unreachable. The check runs again at the next session start."
+                       % (cfg["api_url"], str(e)[:200]))
     notes = []
     scope = product.get("autoCloseScope")
     if scope in ("NONE", "DEVELOPMENT"):

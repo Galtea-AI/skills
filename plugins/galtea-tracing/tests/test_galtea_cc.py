@@ -7,18 +7,22 @@ import io
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 import types
 import unittest
+import urllib.error
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(PLUGIN, "scripts"))
 import galtea_cc as gc  # noqa: E402
+
+REAL_API = gc.api
 
 UUID = "3f2b8c1e-9a4d-4e7b-b1c2-5d6e7f8a9b0c"
 SHA = "236c26f2d1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5"
@@ -57,9 +61,9 @@ class FakeApi:
 
     def __call__(self, cfg, method, path, body=None, timeout=None):
         self.calls.append((method, path, body))
-        for m, prefix in self.fail:
+        for m, prefix, *exc in self.fail:
             if m == method and path.startswith(prefix):
-                raise RuntimeError("%s %s -> 500" % (method, path))
+                raise exc[0] if exc else RuntimeError("%s %s -> 500" % (method, path))
         for (m, prefix), res in self.responses.items():
             if m == method and path.startswith(prefix):
                 return res(body) if callable(res) else res
@@ -325,10 +329,31 @@ class TestCheck(Base):
         self.assertIsNotNone(self.start())
 
     def test_refused_key_reports_and_retries(self):
-        fake = self.use_api(FakeApi(fail=[("GET", "/products/")]))
-        self.assertIn("refused", self.start()["systemMessage"])
-        self.assertEqual(fake.paths("POST"), [])
-        self.assertIsNotNone(self.start())
+        for status in (401, 403, 404):
+            with self.subTest(status=status):
+                err = gc.ApiError("GET", "/products/prod_1", status, b"no")
+                fake = self.use_api(FakeApi(fail=[("GET", "/products/", err)]))
+                self.assertIn("refused", self.start()["systemMessage"])
+                self.assertEqual(fake.paths("POST"), [])
+                self.assertIsNotNone(self.start())
+
+    def test_api_keeps_the_http_status(self):
+        err = urllib.error.HTTPError("http://x/products/p", 401, "Unauthorized", {}, io.BytesIO(b"bad key"))
+        with mock.patch.object(gc.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(gc.ApiError) as ctx:
+                REAL_API(gc.load_config(), "GET", "/products/p")
+        self.assertEqual(ctx.exception.status, 401)
+
+    def test_unreachable_galtea_is_not_called_refused(self):
+        for err in (urllib.error.URLError("Name or service not known"), socket.timeout("timed out"),
+                    gc.ApiError("GET", "/products/prod_1", 502, b"bad gateway")):
+            with self.subTest(err=repr(err)):
+                self.use_api(FakeApi(fail=[("GET", "/products/", err)]))
+                msg = self.start()["systemMessage"]
+                self.assertNotIn("refused", msg)
+                self.assertIn("could not reach Galtea", msg)
+                self.assertIn("next session start", msg)
+                self.assertFalse(os.path.exists(os.path.join(self.data, "checked")))
 
     def test_warns_on_auto_close_and_thinking_summaries(self):
         responses = ok_responses()
