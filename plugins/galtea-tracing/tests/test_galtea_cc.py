@@ -208,6 +208,25 @@ class TestTurn(Base):
         gen = next(t for t in fake.body("POST", "/traces/batch")["traces"] if t["type"] == "GENERATION")
         self.assertEqual(gen["metadata"]["usage"]["cache_creation_input_tokens"], 3)
 
+    def test_a_turn_stops_at_the_next_prompt(self):
+        def step(pid, n, second):
+            return [
+                {"type": "user", "promptId": pid, "timestamp": "2026-01-01T00:00:%02dZ" % second,
+                 "message": {"content": "prompt %s" % pid}},
+                {"type": "assistant", "timestamp": "2026-01-01T00:00:%02dZ" % (second + 1), "message": {
+                    "id": "m" + pid, "model": "claude", "usage": {"input_tokens": n, "output_tokens": n},
+                    "content": [{"type": "tool_use", "id": "t" + pid, "name": "Bash", "input": {"command": pid}}]}},
+                {"type": "user", "promptId": pid, "timestamp": "2026-01-01T00:00:%02dZ" % (second + 2),
+                 "message": {"content": [{"type": "tool_result", "tool_use_id": "t" + pid, "content": "ok"}]}},
+            ]
+        path = self.transcript(step("p1", 10, 0) + step("p2", 99, 10))
+        fake = self.run_turn(path)
+        traces = fake.body("POST", "/traces/batch")["traces"]
+        self.assertEqual([t["name"] for t in traces], ["llm:claude", "tool:Bash"])
+        self.assertEqual(next(t for t in traces if t["type"] == "TOOL")["inputData"], {"input": {"command": "p1"}})
+        self.assertEqual(fake.body("PATCH", "/inferenceResults/ir_1"),
+                         {"inputTokens": 10, "outputTokens": 10, "cacheReadInputTokens": 0})
+
     def test_session_is_production_with_metadata(self):
         fake = self.run_turn(self.turn())
         body = fake.body("POST", "/sessions")

@@ -325,7 +325,7 @@ def is_prompt_line(d):
 
 
 def turn_lines(lines, prompt_id):
-    """Main-thread lines from this turn's prompt to the end of the file."""
+    """Main-thread lines from this turn's prompt up to the next turn's prompt."""
     start = None
     for i, d in enumerate(lines):
         if prompt_id and d.get("promptId") == prompt_id and is_prompt_line(d):
@@ -338,7 +338,16 @@ def turn_lines(lines, prompt_id):
                 break
     if start is None:
         return []
-    return [d for d in lines[start:] if not d.get("isSidechain")]
+    own = lines[start].get("promptId")
+    out = [lines[start]]
+    for d in lines[start + 1:]:
+        if d.get("isSidechain"):
+            continue
+        # a prompt line with no promptId is kept: only a known other prompt ends the turn
+        if d.get("promptId") and d.get("promptId") != own and is_prompt_line(d):
+            break
+        out.append(d)
+    return out
 
 
 def clip(value, limit):
