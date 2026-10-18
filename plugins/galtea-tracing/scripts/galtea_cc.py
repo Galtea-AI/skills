@@ -127,7 +127,6 @@ class ApiError(RuntimeError):
     def __init__(self, method, path, status, body):
         super().__init__("%s %s -> %s %s" % (method, path, status, body[:500]))
         self.status = status
-        self.body = body
 
 
 def api(cfg, method, path, body=None, timeout=None):
@@ -849,7 +848,7 @@ def sync_title(cfg, hook):
             sid, meta, last = st.get("galtea_session_id"), st.get("metadata"), st.get("title_sent")
         if not sid or last == sent:
             return
-        if meta is None:  # a session found again after its state was lost, or made by an older plugin
+        if meta is None:  # the session was found by its customId, so the state holds no copy of its metadata
             meta = api(cfg, "GET", "/sessions/%s" % sid).get("metadata")
             meta = meta if isinstance(meta, dict) else {}
         meta = dict(meta, title=sent[0], title_source=sent[1])

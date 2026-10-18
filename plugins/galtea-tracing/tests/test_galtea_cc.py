@@ -711,14 +711,11 @@ class TestResume(Base):
     """`claude --resume` of a session whose state file is gone (pruned after 7 days, or
     the plugin reinstalled) must keep sending turns to the session it already has."""
 
-    COLLISION = gc.ApiError("POST", "/sessions", 400, b'{"error":"A Session with the same customId: '
-                                                       b"'s1' already exists for version with ID: 'v1'.\"}")
-
-    def resume(self, turns, found=None, fail=None):
+    def resume(self, turns, found=None, fail=()):
         responses = ok_responses()
         responses[("GET", "/sessions")] = [{"id": "sess_old", "customId": "s1"}] if found is None else found
         responses[("GET", "/inferenceResults")] = turns
-        fake = self.use_api(FakeApi(responses, fail=[("POST", "/sessions", self.COLLISION)] if fail is None else fail))
+        fake = self.use_api(FakeApi(responses, fail=fail))
         self.run_hook("UserPromptSubmit", prompt="hi")
         self.run_hook("Stop", last_assistant_message="ok")
         return fake
@@ -733,13 +730,13 @@ class TestResume(Base):
 
     def test_resume_after_a_new_version_continues_the_old_session(self):
         # customId is unique per version, so POST /sessions succeeds once the product has a newer one
-        fake = self.resume([{"id": "a", "index": 0}], fail=[])
+        fake = self.resume([{"id": "a", "index": 0}])
         body = fake.body("POST", "/inferenceResults")
         self.assertEqual((body["sessionId"], body["index"]), ("sess_old", 1))
         self.assertNotIn("/sessions", fake.paths("POST"))
 
     def test_a_session_with_another_custom_id_is_not_reused(self):
-        fake = self.resume([], found=[{"id": "sess_other", "customId": "other"}], fail=[])
+        fake = self.resume([], found=[{"id": "sess_other", "customId": "other"}])
         self.assertEqual(fake.body("POST", "/inferenceResults")["sessionId"], "sess_1")
 
     def test_a_failed_lookup_still_creates_the_session(self):
@@ -753,14 +750,14 @@ class TestResume(Base):
                 os.makedirs(os.path.join(self.data, "state"), exist_ok=True)
                 with open(os.path.join(self.data, "state", "s1.json"), "w", encoding="utf-8") as f:
                     f.write(content)
-                fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 1}], fail=[])
+                fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 1}])
                 body = fake.body("POST", "/inferenceResults")
                 self.assertEqual((body["sessionId"], body["index"]), ("sess_old", 2))
                 with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
                     self.assertIn("unreadable state", f.read())
 
     def test_a_new_product_gets_its_own_session(self):
-        fake = self.resume([], found=[], fail=[])
+        fake = self.resume([], found=[])
         os.environ["CLAUDE_PLUGIN_OPTION_PRODUCT_ID"] = "prod_2"
         fake.responses[("POST", "/sessions")] = {"id": "sess_2"}
         self.run_hook("UserPromptSubmit", prompt="again")
@@ -775,8 +772,10 @@ class TestResume(Base):
         fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 4}])
         self.assertEqual(fake.body("POST", "/inferenceResults")["index"], 5)
 
-    def test_a_failed_lookup_logs_the_dropped_turn(self):
-        fake = self.resume([], found=[])
+    def test_a_refused_create_logs_the_dropped_turn(self):
+        collision = gc.ApiError("POST", "/sessions", 400, b'{"error":"A Session with the same customId: '
+                                                          b"'s1' already exists for version with ID: 'v1'.\"}")
+        fake = self.resume([], found=[], fail=[("POST", "/sessions", collision)])
         self.assertNotIn("/inferenceResults", fake.paths("POST"))
         with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
             log = f.read()
@@ -784,7 +783,7 @@ class TestResume(Base):
         self.assertIn("already exists", log)
 
     def test_a_new_conversation_is_created_after_one_lookup(self):
-        fake = self.resume([], found=[], fail=[])
+        fake = self.resume([], found=[])
         self.assertEqual(fake.paths("GET"), ["/sessions?customIds=s1&productIds=prod_1"])
         self.assertEqual(fake.body("POST", "/inferenceResults")["sessionId"], "sess_1")
 
@@ -854,8 +853,7 @@ class TestTitle(Base):
         responses = dict([(("GET", "/sessions/sess_old"), {"id": "sess_old", "metadata": {
             "git_branch": "feature", "plugin_version": "0.0.9"}}),
             (("GET", "/sessions"), [{"id": "sess_old", "customId": "s1"}])] + list(responses.items()))
-        collision = gc.ApiError("POST", "/sessions", 400, b"already exists")
-        fake = self.use_api(FakeApi(responses, fail=[("POST", "/sessions", collision)]))
+        fake = self.use_api(FakeApi(responses))
         path = self.transcript(self.lines(("custom-title", "Resumed work")))
         with mock.patch.object(gc.time, "sleep"):
             self.run_hook("UserPromptSubmit", prompt="hi")
