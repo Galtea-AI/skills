@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import types
 import unittest
 import urllib.error
@@ -186,6 +187,53 @@ class TestConfig(Base):
         self.assertEqual(gc.load_config()["api_url"], "https://example.invalid")
         del os.environ["CLAUDE_PLUGIN_OPTION_API_URL"]
         self.assertEqual(gc.load_config()["api_url"], gc.DEFAULT_API_URL)
+
+    def run_main(self, event, **kw):
+        out = io.StringIO()
+        stdin = types.SimpleNamespace(buffer=io.BytesIO(json.dumps(self.hook(event, **kw)).encode()))
+        with mock.patch.object(sys, "stdin", stdin), contextlib.redirect_stdout(out):
+            gc.main(["galtea_cc.py", "hook"])
+        return out.getvalue()
+
+    def test_a_malformed_key_never_reaches_the_log_or_the_message(self):
+        head, tail = "gsk_" + "A1b2C3d4E5" * 3, "TailOfTheSecret987"
+        for key in (head + "\n" + tail, head + " " + tail, "sk-" + tail + head[4:]):
+            with self.subTest(key=repr(key)):
+                os.environ["CLAUDE_PLUGIN_OPTION_API_KEY"] = key
+                self.use_api(REAL_API)
+                with mock.patch.object(gc.urllib.request, "urlopen", side_effect=AssertionError("network")):
+                    out = self.run_main("SessionStart", source="startup")
+                    for event in ("UserPromptSubmit", "Stop", "SessionEnd"):
+                        self.run_main(event, prompt="hi")
+                with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+                    log = f.read()
+                self.assertIn("not a Galtea API key", json.loads(out)["systemMessage"])
+                self.assertIn("not a Galtea API key", log)
+                self.assertNotIn("network", log)
+                for piece in (head, tail, head[4:]):
+                    self.assertNotIn(piece, log)
+                    self.assertNotIn(piece, out)
+
+    def test_a_request_that_cannot_be_built_never_shows_the_key(self):
+        head, tail = "gsk_" + "A1b2C3d4E5" * 3, "TailOfTheSecret987"
+        cfg = dict(gc.load_config(), api_key=head + "\n" + tail)
+        with self.assertRaises(Exception) as ctx:
+            REAL_API(cfg, "GET", "/products/p")
+        shown = "".join(traceback.format_exception(type(ctx.exception), ctx.exception, ctx.exception.__traceback__))
+        self.assertIn("GET /products/p", shown)
+        for piece in (head, tail):
+            self.assertNotIn(piece, shown)
+
+    def test_the_log_never_holds_the_configured_key(self):
+        os.environ["CLAUDE_PLUGIN_OPTION_API_KEY"] = "gsk_" + "Q" * 30
+        gc.log("echo of gsk_%s by a server" % ("Q" * 30))
+        with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+            self.assertNotIn("Q" * 30, f.read())
+
+    def test_stdout_never_holds_the_configured_key(self):
+        os.environ["CLAUDE_PLUGIN_OPTION_API_KEY"] = "gsk_" + "Q" * 30
+        with mock.patch.object(gc, "hook_main", return_value={"systemMessage": "server said gsk_" + "Q" * 30}):
+            self.assertNotIn("Q" * 30, self.run_main("SessionStart"))
 
     def test_data_dir_falls_back_to_home(self):
         del os.environ["CLAUDE_PLUGIN_DATA"]

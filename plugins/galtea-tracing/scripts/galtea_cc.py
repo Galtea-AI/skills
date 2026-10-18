@@ -68,11 +68,21 @@ def data_path(*parts):
     return os.path.join(data_dir(), *parts)
 
 
+def scrub(text):
+    """The text with every part of the configured API key masked. The last guard before
+    the log and stdout, so a key that slipped into an error message never reaches them."""
+    key = os.environ.get("CLAUDE_PLUGIN_OPTION_API_KEY") or ""
+    for piece in sorted(set([key.strip()] + key.split()), key=len, reverse=True):
+        if len(piece) >= 8:
+            text = text.replace(piece, REDACTED)
+    return text
+
+
 def log(msg):
     try:
         os.makedirs(data_dir(), exist_ok=True)
         with open(data_path("hook.log"), "a", encoding="utf-8") as f:
-            f.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg))
+            f.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), scrub(msg)))
     except Exception:
         pass
 
@@ -82,15 +92,24 @@ def log_exc(prefix):
 
 
 def load_config():
+    """The config, with `error` set to a message for the user when it cannot be used."""
     env = os.environ
     redact = env.get("CLAUDE_PLUGIN_OPTION_REDACT_SECRETS", "").strip().lower()
-    return {
+    cfg = {
         "api_key": env.get("CLAUDE_PLUGIN_OPTION_API_KEY", "").strip(),
         "product_id": env.get("CLAUDE_PLUGIN_OPTION_PRODUCT_ID", "").strip(),
         "api_url": (env.get("GALTEA_API_URL") or env.get("CLAUDE_PLUGIN_OPTION_API_URL") or DEFAULT_API_URL).strip(),
         "redact": redact not in ("false", "0", "no", "off"),
         "max_span_bytes": MAX_SPAN_BYTES,
+        "error": None,
     }
+    if not cfg["api_key"] or not cfg["product_id"]:
+        cfg["error"] = "Galtea tracing is installed but has no API key or product id. Set them with /plugin"
+    elif not cfg["api_key"].startswith("gsk_") or re.search(r"\s", cfg["api_key"]):
+        # a space or line break would end up in an HTTP header error, which repeats the key
+        cfg["error"] = ("Galtea tracing is off: the API key is not a Galtea API key. It starts with gsk_ "
+                        "and holds no spaces or line breaks. Set it with /plugin")
+    return cfg
 
 
 def plugin_version():
@@ -127,6 +146,11 @@ def api(cfg, method, path, body=None, timeout=None):
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
         raise ApiError(method, path, e.code, e.read())
+    except OSError:  # URLError, a timeout, a reset: their messages never hold the request headers
+        raise
+    except Exception as e:
+        # an error raised while building the request can repeat the Authorization header
+        raise RuntimeError("%s %s -> request failed (%s)" % (method, path, type(e).__name__)) from None
 
 
 def items(res):
@@ -985,11 +1009,10 @@ def hook_main(raw):
     if not handler or not hook.get("session_id"):
         return None
     cfg = load_config()
-    if not cfg["api_key"] or not cfg["product_id"]:
-        log("missing api key or product id; set them with /plugin")
+    if cfg["error"]:
+        log(cfg["error"])
         if event == "SessionStart":
-            return {"systemMessage": "Galtea tracing is installed but has no API key or product id. "
-                                     "Set them with /plugin, then start a new session."}
+            return {"systemMessage": cfg["error"] + ", then start a new session."}
         return None
     return handler(cfg, hook)
 
@@ -1010,7 +1033,7 @@ def main(argv):
         try:
             out = hook_main(sys.stdin.buffer.read())
             if out:
-                sys.stdout.write(json.dumps(out) + "\n")
+                sys.stdout.write(scrub(json.dumps(out)) + "\n")
         except Exception:
             log_exc("hook failed")
         return 0

@@ -33,6 +33,8 @@ The first session after you install, or after you change the key, product or URL
 - It reads `showThinkingSummaries` in `~/.claude/settings.json`.
 - It runs a self-test. The self-test sends one synthetic turn to a **development** session, reads it back, and deletes it. It never closes that session, so no monitor evaluates it.
 
+An API key that does not start with `gsk_`, or that holds a space or a line break, is never sent: the session start message says the key is not valid, and nothing is logged to Galtea until you fix it.
+
 When the check fails, it runs again when you next start or resume a session. It does not run on `/clear` or a compaction, so a Galtea host that does not answer never stalls those. It says the key or product id was refused only when Galtea answers 401, 403 or 404. Any other failure is reported as Galtea being unreachable.
 
 ## What is sent
