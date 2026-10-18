@@ -235,6 +235,45 @@ class TestTurn(Base):
         self.assertEqual(body["metadata"]["plugin_version"], "0.1.0")
         self.assertEqual(fake.body("POST", "/inferenceResults")["index"], 0)
 
+    def test_an_interrupted_first_prompt_creates_no_session(self):
+        # Esc, then /exit or /clear: the prompt never gets a Stop
+        fake = self.use_api(FakeApi(ok_responses()))
+        self.run_hook("UserPromptSubmit", prompt="hi")
+        self.run_hook("SessionEnd", reason="prompt_input_exit")
+        self.assertEqual(fake.calls, [])
+
+    def test_a_refused_first_turn_leaves_no_empty_session(self):
+        err = gc.ApiError("POST", "/inferenceResults", 400, b"bad")
+        fake = self.use_api(FakeApi(ok_responses(), fail=[("POST", "/inferenceResults", err)]))
+        self.run_hook("UserPromptSubmit", prompt="hi")
+        self.run_hook("Stop", last_assistant_message="ok")
+        self.assertEqual(fake.paths("DELETE"), ["/sessions/sess_1"])
+        fake.fail = ()
+        self.run_hook("UserPromptSubmit", prompt="again")
+        self.run_hook("Stop", last_assistant_message="ok")
+        self.assertEqual(fake.paths("POST").count("/sessions"), 2)
+        self.assertEqual([b["index"] for m, p, b in fake.calls if p == "/inferenceResults"], [0, 0])
+
+    def test_a_refused_first_turn_keeps_a_session_another_turn_uses(self):
+        def refuse(body):
+            with gc.State("s1") as st:  # a concurrent Stop took the next index meanwhile
+                st["index"] += 1
+            raise gc.ApiError("POST", "/inferenceResults", 400, b"bad")
+        responses = ok_responses()
+        responses[("POST", "/inferenceResults")] = refuse
+        fake = self.use_api(FakeApi(responses))
+        self.run_hook("UserPromptSubmit", prompt="hi")
+        self.run_hook("Stop", last_assistant_message="ok")
+        self.assertEqual(fake.paths("DELETE"), [])
+
+    def test_a_refused_later_turn_keeps_the_session(self):
+        fake = self.run_turn(self.turn())
+        fake.fail = [("POST", "/inferenceResults", gc.ApiError("POST", "/inferenceResults", 400, b"bad"))]
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="again")
+            self.run_hook("Stop", last_assistant_message="ok")
+        self.assertEqual(fake.paths("DELETE"), [])
+
     def test_session_end_finishes_once(self):
         fake = self.run_turn(self.turn())
         gc.hook_main(json.dumps(self.hook("SessionEnd", reason="prompt_input_exit")))
@@ -310,7 +349,8 @@ class TestTurn(Base):
 
     def test_a_crash_is_logged_not_raised(self):
         self.use_api(FakeApi(fail=[("POST", "/sessions")]))
-        stdin = types.SimpleNamespace(buffer=io.BytesIO(json.dumps(self.hook("UserPromptSubmit")).encode()))
+        self.run_hook("UserPromptSubmit", prompt="hi")
+        stdin = types.SimpleNamespace(buffer=io.BytesIO(json.dumps(self.hook("Stop")).encode()))
         out = io.StringIO()
         with mock.patch.object(sys, "stdin", stdin), contextlib.redirect_stdout(out):
             self.assertEqual(gc.main(["galtea_cc.py", "hook"]), 0)
@@ -732,13 +772,15 @@ class TestConcurrency(Base):
         responses = ok_responses()
         responses[("POST", "/sessions")] = slow_create
         fake = self.use_api(FakeApi(responses))
-        prompt = self.run_in_thread("UserPromptSubmit", prompt="hi")
+        self.run_hook("UserPromptSubmit", prompt="one", prompt_id="p1")
+        self.run_hook("UserPromptSubmit", prompt="two", prompt_id="p2")
+        first = self.run_in_thread("Stop", prompt_id="p1", last_assistant_message="1")
         self.assertTrue(started.wait(2))
-        stop = self.run_in_thread("Stop", last_assistant_message="ok")
-        prompt.join(5)
-        stop.join(5)
+        second = self.run_in_thread("Stop", prompt_id="p2", last_assistant_message="2")
+        first.join(5)
+        second.join(5)
         self.assertEqual(fake.paths("POST").count("/sessions"), 1)
-        self.assertEqual(fake.body("POST", "/inferenceResults")["sessionId"], "sess_1")
+        self.assertEqual([b["sessionId"] for m, p, b in fake.calls if p == "/inferenceResults"], ["sess_1"] * 2)
 
     def test_concurrent_turns_get_distinct_indexes(self):
         release, first_in = threading.Event(), threading.Event()

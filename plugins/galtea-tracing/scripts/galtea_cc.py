@@ -4,8 +4,9 @@
 Run by the galtea-tracing plugin through scripts/run.sh:
   hook SessionStart -> first session after a config change: check key, product,
                        auto-close, thinking summaries, and run a self-test
-  hook UserPromptSubmit -> remember the prompt, ensure the Galtea session exists
-  hook Stop         -> POST /inferenceResults (prompt + final assistant reply),
+  hook UserPromptSubmit -> remember the prompt
+  hook Stop         -> the Galtea session at the first turn sent, then
+                       POST /inferenceResults (prompt + final assistant reply),
                        then POST /traces/batch with the turn's steps, then the
                        session title to metadata when it changed
   hook SessionEnd   -> the session title, then PATCH /sessions/{id}/finish so
@@ -664,7 +665,6 @@ def on_prompt(cfg, hook):
         prompts = [p for p in st.get("prompts", []) if pid is None or p.get("prompt_id") != pid]
         prompts.append({"prompt": hook.get("prompt", ""), "ts": time.time(), "prompt_id": pid})
         st["prompts"] = prompts[-PENDING_MAX:]
-    ensure_session(cfg, hook)
 
 
 def take_prompt(st, prompt_id):
@@ -695,14 +695,38 @@ def on_stop(cfg, hook):
             st.get("inflight", {}).pop(token, None)
 
 
+def claim_turn(cfg, hook):
+    """(session id, turn index) for one turn. The id and the index are read under one
+    lock, so a session deleted by drop_empty_session is never given a turn."""
+    key = hook["session_id"]
+    while True:
+        ensure_session(cfg, hook)
+        with State(key) as st:
+            if st.get("galtea_session_id"):
+                index = st["index"]
+                st["index"] += 1
+                return st["galtea_session_id"], index
+
+
+def drop_empty_session(cfg, key, sid):
+    """Delete the session when no turn holds an index in it: it has no turns, so
+    auto-close would never close it. The next turn creates the session again."""
+    with State(key) as st:
+        if st.get("galtea_session_id") != sid or st["index"] != 0:
+            return
+        for k in ("galtea_session_id", "metadata", "title_sent"):
+            st.pop(k, None)
+    try:
+        api(cfg, "DELETE", "/sessions/%s" % sid)
+    except Exception:
+        log_exc("could not delete empty session %s" % sid)
+
+
 def send_turn(cfg, hook, pending):
     key = hook["session_id"]
-    index = None
+    index = sid = None
     try:
-        sid = ensure_session(cfg, hook)
-        with State(key) as st:
-            index = st["index"]
-            st["index"] += 1
+        sid, index = claim_turn(cfg, hook)
         ir = post_turn(cfg, sid, index, pending, hook)
     except Exception as e:
         log_exc("turn not sent for session %s" % key)
@@ -712,6 +736,7 @@ def send_turn(cfg, hook, pending):
             with State(key) as st:
                 if st["index"] == index + 1:  # no later turn took the next index
                     st["index"] = index
+            drop_empty_session(cfg, key, sid)
         return
     with State(key) as st:
         st.pop("finished", None)  # a resumed session was reopened by this turn
