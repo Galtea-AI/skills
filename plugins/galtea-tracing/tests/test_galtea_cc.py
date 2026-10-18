@@ -381,9 +381,17 @@ class TestRedaction(unittest.TestCase):
 
     def test_short_values_and_plain_ids_survive(self):
         for text in (UUID, SHA, B64, "git checkout %s" % SHA, "id=%s" % UUID, "PASSWORD=abc",
-                     "max_tokens=4096", "https://github.com/Galtea-AI/skills.git", "the token is useful"):
+                     "max_tokens=4096", "https://github.com/Galtea-AI/skills.git", "the token is useful",
+                     "max_tokens=100000", "input_tokens = 123456", "TOKEN_LIMIT=4096000",
+                     "disk-0123456789abcdef0123456789abcdef", "task-0123456789abcdef0123456789abcdef",
+                     "create(max_tokens=100000, model=x)", '{"max_tokens": "100000"}'):
             with self.subTest(text=text):
                 self.assertEqual(gc.redact(text), text)
+        self.assertEqual(gc.redact({"max_tokens": "100000"}), {"max_tokens": "100000"})
+
+    def test_a_number_prefix_does_not_save_a_secret(self):
+        self.assertEqual(gc.redact("GITHUB_TOKEN=123456abcdef"), "GITHUB_TOKEN=" + gc.REDACTED)
+        self.assertEqual(gc.redact("key sk-" + "a1" * 20), "key " + gc.REDACTED)
 
     def test_unterminated_pem_is_redacted_to_the_end(self):
         out = gc.redact("before -----BEGIN PRIVATE KEY-----\nMIIabc\nmore")

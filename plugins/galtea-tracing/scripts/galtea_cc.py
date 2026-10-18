@@ -182,6 +182,8 @@ def prune_state():
 # --- redaction -------------------------------------------------------------
 
 _NAME = r"[\w.-]{0,64}?(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)[\w.-]{0,64}?"
+# A value of digits only is a count or a limit (max_tokens=100000), never a secret.
+_NOT_A_NUMBER = r"(?!\d+(?:[\s\"'`,;)\]}]|$))"
 # (name, pattern, replacement). Each pattern is anchored by a literal prefix or a
 # lookbehind so a long run that fails to match costs one scan, not one per offset.
 RULES = [
@@ -190,7 +192,7 @@ RULES = [
     ("galtea_key", re.compile(r"gsk_[A-Za-z0-9_-]{20,}"), REDACTED),
     ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"), REDACTED),
     ("openai_project_key", re.compile(r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}"), REDACTED),
-    ("openai_key", re.compile(r"sk-[A-Za-z0-9]{32,}"), REDACTED),
+    ("openai_key", re.compile(r"(?<![\w-])sk-[A-Za-z0-9]{32,}"), REDACTED),
     ("aws_access_key_id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), REDACTED),
     ("github_token", re.compile(r"gh[pousr]_[A-Za-z0-9]{36,}"), REDACTED),
     ("github_pat", re.compile(r"github_pat_[A-Za-z0-9_]{60,}"), REDACTED),
@@ -202,9 +204,9 @@ RULES = [
     ("bearer", re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1" + REDACTED),
     ("url_password", re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^\s:/@\"']{1,256}:)[^\s/@\"']{1,256}(@)"),
      r"\1" + REDACTED + r"\2"),
-    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=\s*)([\"']?)[^\s\"'`]{6,}"),
+    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=\s*)([\"']?)" + _NOT_A_NUMBER + r"[^\s\"'`]{6,}"),
      r"\1\2\3" + REDACTED),
-    ("json_field", re.compile(r"(?i)(\"" + _NAME + r"\"\s*:\s*\")(?:[^\"\\]|\\.){6,}(\")"),
+    ("json_field", re.compile(r"(?i)(\"" + _NAME + r"\"\s*:\s*\")" + _NOT_A_NUMBER + r"(?:[^\"\\]|\\.){6,}(\")"),
      r"\1" + REDACTED + r"\2"),
 ]
 _SECRET_KEY = re.compile(r"(?i)" + _NAME)
@@ -217,8 +219,8 @@ def _redact(value):
         return value
     if isinstance(value, dict):
         # a secret-named key holds a secret value, like the "name": "value" rule
-        return {k: REDACTED if isinstance(v, str) and len(v) >= 6 and isinstance(k, str) and _SECRET_KEY.fullmatch(k)
-                else _redact(v) for k, v in value.items()}
+        return {k: REDACTED if isinstance(v, str) and len(v) >= 6 and not v.isdigit()
+                and isinstance(k, str) and _SECRET_KEY.fullmatch(k) else _redact(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redact(v) for v in value]
     return value
