@@ -15,6 +15,11 @@
       "source": "./",
       "strict": false,
       "skills": ["./skills/galtea", "./skills/galtea-loop"]
+    },
+    {
+      "name": "galtea-tracing",
+      "description": "Send each Claude Code conversation to Galtea as a production session, with its model calls, tool calls and subagents as traces.",
+      "source": "./plugins/galtea-tracing"
     }
   ]
 }

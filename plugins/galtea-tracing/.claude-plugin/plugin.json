@@ -1,0 +1,38 @@
+{
+  "name": "galtea-tracing",
+  "version": "0.1.0",
+  "description": "Send each Claude Code conversation to Galtea as a production session, with its model calls, tool calls and subagents as traces.",
+  "author": {
+    "name": "Galtea AI",
+    "email": "support@galtea.ai"
+  },
+  "homepage": "https://github.com/Galtea-AI/skills/tree/main/plugins/galtea-tracing",
+  "license": "MIT",
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "Galtea API key",
+      "description": "Your gsk_ key from the Galtea dashboard, Settings > API Keys. Kept in Claude Code's secure storage.",
+      "sensitive": true,
+      "required": true
+    },
+    "product_id": {
+      "type": "string",
+      "title": "Galtea product id",
+      "description": "The product that receives your sessions. Copy its id from the product page in the Galtea dashboard.",
+      "required": true
+    },
+    "api_url": {
+      "type": "string",
+      "title": "Galtea API URL",
+      "description": "Change it only for a self-hosted Galtea.",
+      "default": "https://api.galtea.ai"
+    },
+    "redact_secrets": {
+      "type": "boolean",
+      "title": "Redact secrets",
+      "description": "Mask API keys, tokens, passwords and private keys before they leave your machine. Best-effort: it can miss a secret.",
+      "default": true
+    }
+  }
+}
