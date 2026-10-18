@@ -85,7 +85,7 @@ Claude Code writes thinking text to the transcript only when `showThinkingSummar
 
 ## Windows
 
-Claude Code on Windows runs hooks through Git Bash. There, `python3` is often missing. The plugin tries `python3`, then `python`, then the `py -3` launcher, and uses the first one that is Python 3.9 or later. With no Python, the plugin does nothing and Claude Code works as usual.
+Claude Code on Windows runs hooks through Git Bash. There, `python3` is often missing. The plugin tries `python3`, then `python`, then the `py -3` launcher, and uses the first one that is Python 3.9 or later. With no Python, the plugin sends nothing and Claude Code works as usual. Each session start then shows one message that says Galtea tracing needs Python 3.9 or later.
 
 ## Logs and troubleshooting
 

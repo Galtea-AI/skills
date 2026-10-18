@@ -1149,18 +1149,32 @@ class TestPlatform(Base):
         self.assertEqual(r.returncode, 0)
         self.assertIn("on again", r.stdout)
 
-    @unittest.skipUnless(shutil.which("sh"), "needs sh")
-    def test_run_sh_exits_0_without_python(self):
+    def run_sh_without_python(self, stdin, *args):
         bindir = os.path.join(self.tmp, "bin")
-        os.makedirs(bindir)
-        for tool in ("dirname", "uname"):
+        os.makedirs(bindir, exist_ok=True)
+        for tool in ("dirname", "uname", "dd"):
             path = shutil.which(tool)
-            if path:
+            if path and not os.path.exists(os.path.join(bindir, tool)):
                 os.symlink(path, os.path.join(bindir, tool))
-        sh = shutil.which("sh")
-        r = subprocess.run([sh, os.path.join(PLUGIN, "scripts", "run.sh"), "hook"], env={"PATH": bindir},
-                           input="{}", capture_output=True, text=True, timeout=30)
-        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        r = subprocess.run([shutil.which("sh"), os.path.join(PLUGIN, "scripts", "run.sh")] + list(args),
+                           env={"PATH": bindir}, input=stdin, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0)
+        return r.stdout
+
+    @unittest.skipUnless(shutil.which("sh"), "needs sh")
+    def test_run_sh_without_python_is_silent_except_at_session_start(self):
+        for event in ("UserPromptSubmit", "Stop", "SessionEnd"):
+            with self.subTest(event=event):
+                stdin = json.dumps({"session_id": "s1", "hook_event_name": event, "prompt": '"SessionStart"'})
+                self.assertEqual(self.run_sh_without_python(stdin, "hook"), "")
+        self.assertEqual(self.run_sh_without_python("{}", "hook"), "")
+        for sep in (",", ", "):
+            with self.subTest(sep=sep):
+                stdin = sep.join(['{"session_id": "s1"', '"hook_event_name":"SessionStart"', '"source":"startup"}'])
+                out = self.run_sh_without_python(stdin.replace('":"', '": "') if sep == ", " else stdin, "hook")
+                self.assertEqual(len(out.splitlines()), 1)
+                self.assertIn("needs Python 3.9 or later", json.loads(out)["systemMessage"])
+        self.assertIn("needs Python 3.9", self.run_sh_without_python("", "mute"))
 
 
 if __name__ == "__main__":

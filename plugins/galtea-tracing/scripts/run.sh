@@ -16,6 +16,16 @@ for c in python3 python "py -3"; do
   exit 0
 done
 
-# A hook prints nothing; a command tells the user why it did nothing.
-[ "$1" = hook ] || echo "Galtea tracing needs Python 3.9 or later (tried python3, python, py -3)."
+# A command tells the user why it did nothing. A hook prints only at session start, the one
+# hook whose output the user sees; the event name sits near the start of the hook's JSON.
+need="Galtea tracing needs Python 3.9 or later (tried python3, python, py -3)."
+if [ "$1" != hook ]; then
+  echo "$need"
+  exit 0
+fi
+input=$(dd bs=4096 count=1 2>/dev/null)
+case $input in
+  *'"hook_event_name":"SessionStart"'* | *'"hook_event_name": "SessionStart"'*)
+    echo "{\"systemMessage\": \"$need Install it, then start a new session.\"}" ;;
+esac
 exit 0
