@@ -22,7 +22,8 @@ spans are lost (and the error is logged).
 
 Config comes from the plugin's install dialog (CLAUDE_PLUGIN_OPTION_API_KEY,
 _PRODUCT_ID, _API_URL, _REDACT_SECRETS). GALTEA_API_URL overrides the host for
-development. GALTEA_CC_DISABLE=1 skips logging for this process.
+development. GALTEA_CC_DISABLE=1 skips logging for this process. `claude -p`
+runs are not logged.
 """
 import hashlib
 import json
@@ -43,7 +44,6 @@ DEFAULT_API_URL = "https://api.galtea.ai"
 AGENT_TOOLS = ("Agent", "Task")
 SPAN_BATCH = 100
 MAX_SPAN_BYTES = 20000
-SPANS_FOR_HEADLESS = False  # `claude -p` runs log the turn but not its steps
 STATE_MAX_AGE = 7 * 24 * 3600
 CHECK_BUDGET = 20  # seconds; the SessionStart hook times out at 30
 SETTINGS_FILE = os.path.expanduser("~/.claude/settings.json")
@@ -416,8 +416,6 @@ def log_spans(cfg, hook, ir_id, wait=1.5):
     lines = turn_lines(read_jsonl(path), hook.get("prompt_id"))
     if not lines:
         return None
-    if lines[0].get("entrypoint") == "sdk-cli" and not SPANS_FOR_HEADLESS:
-        return None
     subagent_dir = os.path.join(os.path.dirname(path), hook["session_id"], "subagents")
     totals = {}
     spans = build_spans(lines, ir_id, cfg, None, subagent_dir, totals)
@@ -591,7 +589,7 @@ SELFTEST_REPLY = "There are 42 files."
 def selftest_transcript(path):
     ts = lambda s: "2026-01-01T00:00:%02d.000Z" % s
     lines = [
-        {"type": "user", "promptId": "p1", "entrypoint": "cli", "timestamp": ts(0),
+        {"type": "user", "promptId": "p1", "timestamp": ts(0),
          "message": {"role": "user", "content": SELFTEST_PROMPT}},
         {"type": "assistant", "timestamp": ts(2), "message": {"id": "m1", "model": "selftest", "content": [
             {"type": "thinking", "thinking": "I should run ls."},
@@ -688,6 +686,10 @@ HANDLERS = {"SessionStart": on_start, "UserPromptSubmit": on_prompt, "Stop": on_
 def hook_main(raw):
     """Run one hook. Returns the dict to print, or None."""
     if os.environ.get("GALTEA_CC_DISABLE") == "1":
+        return None
+    # `claude -p` kills async hooks at teardown, so its Stop never posts the turn and
+    # the session would stay empty and open forever. Claude Code sets this in every hook.
+    if os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
         return None
     hook = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
     event = hook.get("hook_event_name")

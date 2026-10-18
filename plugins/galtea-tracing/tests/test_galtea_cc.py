@@ -90,7 +90,8 @@ class Base(unittest.TestCase):
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(("CLAUDE_PLUGIN_", "GALTEA_"))}
         env.update({"CLAUDE_PLUGIN_DATA": self.data, "CLAUDE_PLUGIN_OPTION_API_KEY": "gsk_test_key",
-                    "CLAUDE_PLUGIN_OPTION_PRODUCT_ID": "prod_1", "GALTEA_API_URL": "http://127.0.0.1:9"})
+                    "CLAUDE_PLUGIN_OPTION_PRODUCT_ID": "prod_1", "GALTEA_API_URL": "http://127.0.0.1:9",
+                    "CLAUDE_CODE_ENTRYPOINT": "cli"})
         p = mock.patch.dict(os.environ, env, clear=True)
         p.start()
         self.addCleanup(p.stop)
@@ -119,7 +120,7 @@ class Base(unittest.TestCase):
 
     def turn(self, output="42", usage=None):
         return self.transcript([
-            {"type": "user", "promptId": "p1", "entrypoint": "cli", "timestamp": "2026-01-01T00:00:00Z",
+            {"type": "user", "promptId": "p1", "timestamp": "2026-01-01T00:00:00Z",
              "message": {"content": "hi"}},
             {"type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "message": {
                 "id": "m1", "model": "claude", "usage": usage or {"input_tokens": 10, "output_tokens": 5,
@@ -151,6 +152,18 @@ class TestConfig(Base):
         fake = self.use_api(FakeApi(ok_responses()))
         self.assertIsNone(gc.hook_main(json.dumps(self.hook("SessionStart", source="startup"))))
         self.assertEqual(fake.calls, [])
+
+    def test_headless_run_makes_no_api_call(self):
+        # Claude Code sets CLAUDE_CODE_ENTRYPOINT=sdk-cli in every hook of a `claude -p` run
+        os.environ["CLAUDE_CODE_ENTRYPOINT"] = "sdk-cli"
+        fake = self.use_api(FakeApi(ok_responses()))
+        path = self.transcript([{"type": "user", "promptId": "p1", "message": {"content": "hi"}}])
+        with mock.patch.object(gc.time, "sleep"):
+            for event in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"):
+                self.assertIsNone(gc.hook_main(json.dumps(self.hook(
+                    event, source="startup", prompt="hi", transcript_path=path, last_assistant_message="ok"))))
+        self.assertEqual(fake.calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.data, "state")))
 
     def test_options_and_host_override(self):
         os.environ["CLAUDE_PLUGIN_OPTION_API_URL"] = "https://example.invalid"
