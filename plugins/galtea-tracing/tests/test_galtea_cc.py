@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -453,16 +454,153 @@ class TestRedaction(unittest.TestCase):
                     self.assertLess(elapsed, 0.05)
 
 
+class TestConcurrency(Base):
+    """Async hooks of one session run at the same time. The state lock is held only
+    around state reads and writes, never across an API call."""
+
+    def run_in_thread(self, event, **kw):
+        t = threading.Thread(target=gc.hook_main, args=(json.dumps(self.hook(event, **kw)),), daemon=True)
+        t.start()
+        return t
+
+    def state_is_free(self):
+        """True when another opener gets the state lock within 2 s."""
+        got = []
+
+        def take():
+            with gc.State("s1"):
+                got.append(True)
+        t = threading.Thread(target=take, daemon=True)
+        t.start()
+        t.join(2)
+        return bool(got)
+
+    def test_state_lock_is_free_during_api_calls(self):
+        free = {}
+
+        def probe(name, res):
+            def answer(body):
+                free[name] = self.state_is_free()
+                return res
+            return answer
+        responses = ok_responses()
+        responses[("POST", "/sessions")] = probe("create", {"id": "sess_1"})
+        responses[("POST", "/inferenceResults")] = probe("turn", {"id": "ir_1"})
+        responses[("PATCH", "/sessions/sess_1/finish")] = probe("finish", {})
+        self.use_api(FakeApi(responses))
+        gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="hi")))
+        gc.hook_main(json.dumps(self.hook("Stop", last_assistant_message="ok")))
+        gc.hook_main(json.dumps(self.hook("SessionEnd", reason="other")))
+        self.assertEqual(free, {"create": True, "turn": True, "finish": True})
+
+    def test_concurrent_hooks_create_one_session(self):
+        started = threading.Event()
+
+        def slow_create(body):
+            started.set()
+            time.sleep(0.3)
+            return {"id": "sess_1"}
+        responses = ok_responses()
+        responses[("POST", "/sessions")] = slow_create
+        fake = self.use_api(FakeApi(responses))
+        prompt = self.run_in_thread("UserPromptSubmit", prompt="hi")
+        self.assertTrue(started.wait(2))
+        stop = self.run_in_thread("Stop", last_assistant_message="ok")
+        prompt.join(5)
+        stop.join(5)
+        self.assertEqual(fake.paths("POST").count("/sessions"), 1)
+        self.assertEqual(fake.body("POST", "/inferenceResults")["sessionId"], "sess_1")
+
+    def test_concurrent_turns_get_distinct_indexes(self):
+        release, first_in = threading.Event(), threading.Event()
+        indexes = []
+
+        def turn(body):
+            indexes.append(body["index"])
+            if len(indexes) == 1:
+                first_in.set()
+                release.wait(2)
+            return {"id": "ir_%d" % body["index"]}
+        responses = ok_responses()
+        responses[("POST", "/inferenceResults")] = turn
+        self.use_api(FakeApi(responses))
+        gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="one")))
+        slow = self.run_in_thread("Stop", last_assistant_message="1")
+        self.assertTrue(first_in.wait(2))
+        gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="two")))
+        gc.hook_main(json.dumps(self.hook("Stop", last_assistant_message="2")))
+        release.set()
+        slow.join(5)
+        self.assertEqual(sorted(indexes), [0, 1])
+        with gc.State("s1") as st:
+            self.assertEqual(st["index"], 2)
+
+    def test_session_end_waits_for_a_turn_in_flight(self):
+        first_in = threading.Event()
+        done = []
+
+        def turn(body):
+            first_in.set()
+            time.sleep(0.3)
+            done.append("turn")
+            return {"id": "ir_1"}
+        responses = ok_responses()
+        responses[("POST", "/inferenceResults")] = turn
+        responses[("PATCH", "/sessions/sess_1/finish")] = lambda body: done.append("finish") or {}
+        self.use_api(FakeApi(responses))
+        gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="hi")))
+        stop = self.run_in_thread("Stop", last_assistant_message="ok")
+        self.assertTrue(first_in.wait(2))
+        gc.hook_main(json.dumps(self.hook("SessionEnd", reason="other")))
+        stop.join(5)
+        self.assertEqual(done, ["turn", "finish"])
+
+    def test_a_failed_turn_is_logged_and_frees_its_index(self):
+        self.use_api(FakeApi(ok_responses(), fail=[("POST", "/inferenceResults")]))
+        gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="hi")))
+        gc.hook_main(json.dumps(self.hook("Stop", last_assistant_message="ok")))
+        with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+            self.assertIn("turn not sent for session s1", f.read())
+        with gc.State("s1") as st:
+            self.assertEqual(st["index"], 0)
+
+
 class TestPlatform(Base):
+    def fake_msvcrt(self, busy):
+        """msvcrt whose non-blocking lock fails `busy` times before it succeeds."""
+        calls = []
+
+        def locking(fd, mode, n):
+            calls.append(mode)
+            if mode == 2 and calls.count(2) <= busy:
+                raise OSError("locked")
+        return types.SimpleNamespace(LK_LOCK=1, LK_NBLCK=2, LK_UNLCK=0, locking=locking), calls
+
     def test_windows_lock_path_when_fcntl_is_missing(self):
-        msvcrt = types.SimpleNamespace(LK_LOCK=1, LK_UNLCK=0, locking=mock.Mock())
+        msvcrt, calls = self.fake_msvcrt(busy=0)
         with mock.patch.dict(sys.modules, {"fcntl": None, "msvcrt": msvcrt}):
             with gc.State("s1") as st:
                 st["x"] = 1
-        modes = [c.args[1] for c in msvcrt.locking.call_args_list]
-        self.assertEqual(modes, [msvcrt.LK_LOCK, msvcrt.LK_UNLCK])
+        self.assertEqual(calls, [msvcrt.LK_NBLCK, msvcrt.LK_UNLCK])
         with gc.State("s1") as st:
             self.assertEqual(st["x"], 1)
+
+    def test_windows_lock_retries_while_another_hook_holds_it(self):
+        msvcrt, calls = self.fake_msvcrt(busy=3)
+        with mock.patch.dict(sys.modules, {"fcntl": None, "msvcrt": msvcrt}), mock.patch.object(gc.time, "sleep"):
+            with gc.State("s1") as st:
+                st["x"] = 1
+        self.assertEqual(calls, [msvcrt.LK_NBLCK] * 4 + [msvcrt.LK_UNLCK])
+
+    def test_windows_lock_gives_up_at_the_deadline(self):
+        msvcrt, calls = self.fake_msvcrt(busy=10 ** 6)
+        clock = iter(range(0, 10 ** 6, 5))
+        with mock.patch.dict(sys.modules, {"fcntl": None, "msvcrt": msvcrt}), \
+                mock.patch.object(gc.time, "sleep"), mock.patch.object(gc.time, "time", lambda: next(clock)):
+            with self.assertRaises(OSError):
+                gc.State("s1").__enter__()
+        self.assertNotIn(msvcrt.LK_LOCK, calls)
+        self.assertLess(len(calls), 20)
 
     @unittest.skipUnless(shutil.which("git"), "needs git")
     def test_git_metadata_strips_credentials(self):

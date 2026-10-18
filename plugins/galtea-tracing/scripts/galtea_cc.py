@@ -45,6 +45,7 @@ AGENT_TOOLS = ("Agent", "Task")
 SPAN_BATCH = 100
 MAX_SPAN_BYTES = 20000
 STATE_MAX_AGE = 7 * 24 * 3600
+WAIT = 40  # seconds a hook waits on another hook of its session: longer than one 30 s API call
 CHECK_BUDGET = 20  # seconds; the SessionStart hook times out at 30
 SETTINGS_FILE = os.path.expanduser("~/.claude/settings.json")
 REDACTED = "[REDACTED]"
@@ -134,8 +135,17 @@ def lock(fh):
         import fcntl
     except ImportError:
         import msvcrt
-        fh.seek(0)
-        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)  # retries for ~10 s, then raises
+        # LK_LOCK gives up after about 10 s, so retry the non-blocking form up to our own deadline
+        deadline = time.time() + WAIT
+        while True:
+            fh.seek(0)
+            try:
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    raise
+                time.sleep(0.05)
 
         def unlock():
             fh.seek(0)
@@ -146,7 +156,8 @@ def lock(fh):
 
 
 class State:
-    """Per-session state file, locked so concurrent async hooks don't race."""
+    """Per-session state file, locked so concurrent async hooks don't race.
+    Hold it only to read and write state, never across an API call."""
 
     def __init__(self, session_id):
         os.makedirs(data_path("state"), exist_ok=True)
@@ -154,7 +165,11 @@ class State:
 
     def __enter__(self):
         self.fh = os.fdopen(os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600), "r+", encoding="utf-8")
-        self.unlock = lock(self.fh)
+        try:
+            self.unlock = lock(self.fh)
+        except Exception:
+            self.fh.close()
+            raise
         self.fh.seek(0)
         raw = self.fh.read()
         self.data = json.loads(raw) if raw.strip() else {"index": 0}
@@ -513,12 +528,30 @@ def session_body(cfg, custom_id, cwd, production=True):
             "metadata": {k: v for k, v in meta.items() if v is not None}}
 
 
-def ensure_session(cfg, st, hook):
-    if st.get("galtea_session_id"):
-        return st["galtea_session_id"]
-    body = session_body(cfg, hook["session_id"], hook.get("cwd"))
-    st["galtea_session_id"] = api(cfg, "POST", "/sessions", body)["id"]
-    return st["galtea_session_id"]
+def ensure_session(cfg, hook):
+    """The Galtea session id, created once. While another hook of the session is
+    creating it (the `creating` claim), wait for its result instead of creating a second."""
+    key = hook["session_id"]
+    deadline = time.time() + WAIT
+    while True:
+        with State(key) as st:
+            if st.get("galtea_session_id"):
+                return st["galtea_session_id"]
+            now = time.time()
+            if now - st.get("creating", 0) > WAIT or now > deadline:
+                st["creating"] = now
+                break
+        time.sleep(0.1)
+    try:
+        sid = api(cfg, "POST", "/sessions", session_body(cfg, key, hook.get("cwd")))["id"]
+    except Exception:
+        with State(key) as st:
+            st.pop("creating", None)
+        raise
+    with State(key) as st:
+        st.pop("creating", None)
+        st["galtea_session_id"] = sid
+    return sid
 
 
 def post_turn(cfg, sid, index, pending, hook):
@@ -552,30 +585,69 @@ def on_prompt(cfg, hook):
     with State(hook["session_id"]) as st:
         st["pending"] = {"prompt": hook.get("prompt", ""), "ts": time.time(),
                          "prompt_id": hook.get("prompt_id")}
-        ensure_session(cfg, st, hook)
+    ensure_session(cfg, hook)
 
 
 def on_stop(cfg, hook):
+    key = hook["session_id"]
     muted = is_muted(hook.get("cwd"))
-    with State(hook["session_id"]) as st:
+    token = uuid.uuid4().hex
+    with State(key) as st:
         pending = st.pop("pending", None)
         if not pending or muted:
             return  # muted, or Stop re-fired (e.g. after a blocking Stop hook) with no new prompt
-        sid = ensure_session(cfg, st, hook)
-        ir = post_turn(cfg, sid, st["index"], pending, hook)
-        st["index"] += 1
+        st.setdefault("inflight", {})[token] = time.time()  # SessionEnd waits for it
+    try:
+        send_turn(cfg, hook, pending)
+    finally:
+        with State(key) as st:
+            st.get("inflight", {}).pop(token, None)
+
+
+def send_turn(cfg, hook, pending):
+    key = hook["session_id"]
+    index = None
+    try:
+        sid = ensure_session(cfg, hook)
+        with State(key) as st:
+            index = st["index"]
+            st["index"] += 1
+        ir = post_turn(cfg, sid, index, pending, hook)
+    except Exception:
+        log_exc("turn not sent for session %s" % key)
+        if index is not None:
+            with State(key) as st:
+                if st["index"] == index + 1:  # no later turn took the next index
+                    st["index"] = index
+        return
+    with State(key) as st:
         st.pop("finished", None)  # a resumed session was reopened by this turn
     hook["prompt_id"] = hook.get("prompt_id") or pending.get("prompt_id")
     post_spans(cfg, hook, ir["id"])
 
 
 def on_end(cfg, hook):
-    with State(hook["session_id"]) as st:
-        sid = st.get("galtea_session_id")
-        if sid and st["index"] > 0 and not st.get("finished"):
-            api(cfg, "PATCH", "/sessions/%s/finish" % sid,
-                {"stoppingReason": "claude_code:%s" % hook.get("reason", "other")})
-            st["finished"] = True
+    key = hook["session_id"]
+    deadline = time.time() + WAIT
+    while True:
+        with State(key) as st:
+            now = time.time()
+            # a Stop hook killed mid-turn never clears its entry, so an old one is ignored
+            st["inflight"] = {t: ts for t, ts in st.get("inflight", {}).items() if now - ts < WAIT}
+            if not st["inflight"] or now > deadline:
+                sid = st.get("galtea_session_id")
+                if not sid or st["index"] == 0 or st.get("finished"):
+                    return
+                st["finished"] = True
+                break
+        time.sleep(0.1)
+    try:
+        api(cfg, "PATCH", "/sessions/%s/finish" % sid,
+            {"stoppingReason": "claude_code:%s" % hook.get("reason", "other")})
+    except Exception:
+        with State(key) as st:
+            st.pop("finished", None)
+        raise
 
 
 def fingerprint(cfg):
