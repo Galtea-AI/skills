@@ -665,9 +665,11 @@ def send_turn(cfg, hook, pending):
             index = st["index"]
             st["index"] += 1
         ir = post_turn(cfg, sid, index, pending, hook)
-    except Exception:
+    except Exception as e:
         log_exc("turn not sent for session %s" % key)
-        if index is not None:
+        # only a 4xx proves the server stored nothing; after a timeout or a 5xx it may have
+        # stored the turn, and a gap in the indexes is harmless where a duplicate is not
+        if index is not None and isinstance(e, ApiError) and 400 <= e.status < 500:
             with State(key) as st:
                 if st["index"] == index + 1:  # no later turn took the next index
                     st["index"] = index

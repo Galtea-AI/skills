@@ -768,14 +768,29 @@ class TestConcurrency(Base):
             self.assertEqual([p["prompt"] for p in st["prompts"]],
                              ["p%d" % i for i in range(5, gc.PENDING_MAX + 5)])
 
-    def test_a_failed_turn_is_logged_and_frees_its_index(self):
-        self.use_api(FakeApi(ok_responses(), fail=[("POST", "/inferenceResults")]))
+    def test_a_refused_turn_is_logged_and_frees_its_index(self):
+        err = gc.ApiError("POST", "/inferenceResults", 400, b"bad")
+        self.use_api(FakeApi(ok_responses(), fail=[("POST", "/inferenceResults", err)]))
         gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="hi")))
         gc.hook_main(json.dumps(self.hook("Stop", last_assistant_message="ok")))
         with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
             self.assertIn("turn not sent for session s1", f.read())
         with gc.State("s1") as st:
             self.assertEqual(st["index"], 0)
+
+    def test_a_turn_the_server_may_have_stored_keeps_its_index(self):
+        # a timeout or a 5xx can come after the server stored the turn: a gap is harmless, a duplicate is not
+        for err in (socket.timeout("timed out"), urllib.error.URLError("reset"),
+                    gc.ApiError("POST", "/inferenceResults", 502, b"bad gateway")):
+            with self.subTest(err=repr(err)):
+                fake = self.use_api(FakeApi(ok_responses(), fail=[("POST", "/inferenceResults", err)]))
+                gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="hi")))
+                gc.hook_main(json.dumps(self.hook("Stop", last_assistant_message="ok")))
+                fake.fail = ()
+                gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="next")))
+                gc.hook_main(json.dumps(self.hook("Stop", last_assistant_message="ok")))
+                failed, sent = [b["index"] for m, p, b in fake.calls if p == "/inferenceResults"]
+                self.assertEqual(sent, failed + 1)
 
 
 class TestPlatform(Base):
