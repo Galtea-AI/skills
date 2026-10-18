@@ -319,6 +319,17 @@ class TestCheck(Base):
         self.assertEqual(fake.paths("DELETE"), ["/sessions/sess_1"])
         self.assertFalse(os.path.exists(os.path.join(self.data, "checked")))
 
+    def test_self_test_deletes_a_session_whose_create_timed_out(self):
+        # the server can create the session and answer after the client gave up
+        def lookup(body):
+            custom_id = fake.body("POST", "/sessions")["customId"]
+            return [{"id": "sess_other", "customId": "someone-else"}, {"id": "sess_late", "customId": custom_id}]
+        responses = ok_responses()
+        responses[("GET", "/sessions")] = lookup
+        fake = self.use_api(FakeApi(responses, fail=[("POST", "/sessions", socket.timeout("timed out"))]))
+        self.assertIn("self-test failed", self.start()["systemMessage"])
+        self.assertEqual(fake.paths("DELETE"), ["/sessions/sess_late"])
+
     def test_self_test_fails_on_too_few_traces(self):
         responses = ok_responses()
         responses[("GET", "/traces")] = [{"id": "a"}]

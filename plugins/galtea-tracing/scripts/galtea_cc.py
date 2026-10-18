@@ -817,9 +817,10 @@ def self_test(cfg):
     tdir = tempfile.mkdtemp(prefix="galtea-cc-selftest-")
     custom_id = "galtea-cc-selftest-%d-%s" % (int(time.time()), uuid.uuid4().hex[:8])
     tpath = os.path.join(tdir, custom_id + ".jsonl")
-    sid = None
+    sid, create_sent = None, False
     try:
         selftest_transcript(tpath)
+        create_sent = True
         sid = api(cfg, "POST", "/sessions", session_body(cfg, custom_id, tdir, production=False))["id"]
         hook = {"session_id": custom_id, "transcript_path": tpath, "cwd": tdir, "prompt_id": "p1",
                 "last_assistant_message": SELFTEST_REPLY}
@@ -830,11 +831,18 @@ def self_test(cfg):
         ok = len(irs) == 1 and len(traces) >= 3
         return ok, "turns=%d traces=%d" % (len(irs), len(traces))
     finally:
-        if sid:
+        sids = [sid] if sid else []
+        if create_sent and not sid:
+            # the server can create the session and answer after our timeout
             try:
-                api(cfg, "DELETE", "/sessions/%s" % sid, timeout=5)
+                sids = [x["id"] for x in find_sessions(cfg, custom_id, timeout=5)]
             except Exception:
-                log_exc("selftest could not delete development session %s" % sid)
+                log_exc("selftest could not look up development session %s" % custom_id)
+        for s in sids:
+            try:
+                api(cfg, "DELETE", "/sessions/%s" % s, timeout=5)
+            except Exception:
+                log_exc("selftest could not delete development session %s" % s)
         shutil.rmtree(tdir, ignore_errors=True)
 
 
