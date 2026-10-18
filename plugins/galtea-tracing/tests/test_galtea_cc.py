@@ -499,6 +499,19 @@ class TestResume(Base):
         fake = self.resume([], fail=[("GET", "/sessions")])
         self.assertEqual(fake.body("POST", "/inferenceResults")["sessionId"], "sess_1")
 
+    def test_an_unreadable_state_file_is_started_again(self):
+        # a hook killed, or a full disk, between truncate and the end of the write
+        for content in ('{"index": 3, "galtea_session_id": "sess_o', "[1, 2]"):
+            with self.subTest(content=content):
+                os.makedirs(os.path.join(self.data, "state"), exist_ok=True)
+                with open(os.path.join(self.data, "state", "s1.json"), "w", encoding="utf-8") as f:
+                    f.write(content)
+                fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 1}], fail=[])
+                body = fake.body("POST", "/inferenceResults")
+                self.assertEqual((body["sessionId"], body["index"]), ("sess_old", 2))
+                with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+                    self.assertIn("unreadable state", f.read())
+
     def test_next_index_skips_a_gap(self):
         fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 4}])
         self.assertEqual(fake.body("POST", "/inferenceResults")["index"], 5)

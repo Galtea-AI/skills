@@ -177,7 +177,16 @@ class State:
             raise
         self.fh.seek(0)
         raw = self.fh.read()
-        self.data = json.loads(raw) if raw.strip() else {"index": 0}
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            # a hook killed mid-write leaves partial JSON; the session lookup finds the session again
+            log("unreadable state for session file %s; starting it again" % os.path.basename(self.path))
+            data = {}
+        data.setdefault("index", 0)
+        self.data = data
         return self.data
 
     def __exit__(self, *exc):
