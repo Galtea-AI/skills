@@ -141,6 +141,12 @@ class Base(unittest.TestCase):
         h.update(kw)
         return h
 
+    def run_hook(self, event, **kw):
+        """Run a hook the way Claude Code does: through main(), which logs any error."""
+        stdin = types.SimpleNamespace(buffer=io.BytesIO(json.dumps(self.hook(event, **kw)).encode()))
+        with mock.patch.object(sys, "stdin", stdin), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gc.main(["galtea_cc.py", "hook"]), 0)
+
 
 class TestConfig(Base):
     def test_no_product_makes_no_api_call(self):
@@ -452,6 +458,48 @@ class TestRedaction(unittest.TestCase):
                 elapsed = time.perf_counter() - start
                 with self.subTest(rule=name, head=text[:24]):
                     self.assertLess(elapsed, 0.05)
+
+
+class TestResume(Base):
+    """`claude --resume` of a session whose state file is gone (pruned after 7 days, or
+    the plugin reinstalled) must keep sending turns to the session it already has."""
+
+    COLLISION = gc.ApiError("POST", "/sessions", 400, b'{"error":"A Session with the same customId: '
+                                                       b"'s1' already exists for version with ID: 'v1'.\"}")
+
+    def resume(self, turns, found=None, fail=None):
+        responses = ok_responses()
+        responses[("GET", "/sessions")] = [{"id": "sess_old"}] if found is None else found
+        responses[("GET", "/inferenceResults")] = turns
+        fake = self.use_api(FakeApi(responses, fail=fail or [("POST", "/sessions", self.COLLISION)]))
+        self.run_hook("UserPromptSubmit", prompt="hi")
+        self.run_hook("Stop", last_assistant_message="ok")
+        return fake
+
+    def test_resumed_session_is_found_and_continues_its_turns(self):
+        fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 1}, {"id": "c", "index": 2}])
+        self.assertIn("/sessions?customIds=s1&productIds=prod_1", fake.paths("GET"))
+        self.assertIn("/inferenceResults?sessionIds=sess_old", fake.paths("GET"))
+        body = fake.body("POST", "/inferenceResults")
+        self.assertEqual((body["sessionId"], body["index"]), ("sess_old", 3))
+        self.assertEqual(fake.paths("POST").count("/sessions"), 1)
+
+    def test_next_index_skips_a_gap(self):
+        fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 4}])
+        self.assertEqual(fake.body("POST", "/inferenceResults")["index"], 5)
+
+    def test_a_failed_lookup_logs_the_dropped_turn(self):
+        fake = self.resume([], found=[])
+        self.assertNotIn("/inferenceResults", fake.paths("POST"))
+        with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
+            log = f.read()
+        self.assertIn("turn not sent for session s1", log)
+        self.assertIn("already exists", log)
+
+    def test_other_errors_do_not_look_up(self):
+        err = gc.ApiError("POST", "/sessions", 500, b"boom")
+        fake = self.resume([], fail=[("POST", "/sessions", err)])
+        self.assertEqual(fake.paths("GET"), [])
 
 
 class TestConcurrency(Base):

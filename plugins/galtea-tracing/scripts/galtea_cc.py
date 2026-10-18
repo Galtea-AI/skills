@@ -36,6 +36,7 @@ import tempfile
 import time
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -543,7 +544,7 @@ def ensure_session(cfg, hook):
                 break
         time.sleep(0.1)
     try:
-        sid = api(cfg, "POST", "/sessions", session_body(cfg, key, hook.get("cwd")))["id"]
+        sid, next_index = create_session(cfg, hook)
     except Exception:
         with State(key) as st:
             st.pop("creating", None)
@@ -551,7 +552,29 @@ def ensure_session(cfg, hook):
     with State(key) as st:
         st.pop("creating", None)
         st["galtea_session_id"] = sid
+        st["index"] = max(st["index"], next_index)
     return sid
+
+
+def create_session(cfg, hook):
+    """POST /sessions. When the customId is taken, this is a resumed session whose state
+    file is gone (pruned, or the plugin reinstalled): reuse it after its last turn.
+    Returns (session id, next turn index)."""
+    key = hook["session_id"]
+    try:
+        return api(cfg, "POST", "/sessions", session_body(cfg, key, hook.get("cwd")))["id"], 0
+    except ApiError as e:
+        if e.status != 400:
+            raise
+        q = urllib.parse.quote
+        found = items(api(cfg, "GET", "/sessions?customIds=%s&productIds=%s" % (q(key), q(cfg["product_id"]))))
+        if not found:
+            raise
+    sid = max(found, key=lambda x: x.get("createdAt") or "")["id"]
+    turns = items(api(cfg, "GET", "/inferenceResults?sessionIds=%s" % urllib.parse.quote(sid)))
+    next_index = max([len(turns)] + [t["index"] + 1 for t in turns if isinstance(t.get("index"), int)])
+    log("session %s already exists in Galtea; continuing it at turn %d" % (sid, next_index))
+    return sid, next_index
 
 
 def post_turn(cfg, sid, index, pending, hook):
