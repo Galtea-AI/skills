@@ -697,6 +697,18 @@ class TestResume(Base):
                 with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
                     self.assertIn("unreadable state", f.read())
 
+    def test_a_new_product_gets_its_own_session(self):
+        fake = self.resume([], found=[], fail=[])
+        os.environ["CLAUDE_PLUGIN_OPTION_PRODUCT_ID"] = "prod_2"
+        fake.responses[("POST", "/sessions")] = {"id": "sess_2"}
+        self.run_hook("UserPromptSubmit", prompt="again")
+        self.run_hook("Stop", last_assistant_message="ok")
+        self.assertIn("/sessions?customIds=s1&productIds=prod_2", fake.paths("GET"))
+        self.assertEqual([b["productId"] for m, p, b in fake.calls if (m, p) == ("POST", "/sessions")],
+                         ["prod_1", "prod_2"])
+        turns = [(b["sessionId"], b["index"]) for m, p, b in fake.calls if p == "/inferenceResults"]
+        self.assertEqual(turns, [("sess_1", 0), ("sess_2", 0)])
+
     def test_next_index_skips_a_gap(self):
         fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 4}])
         self.assertEqual(fake.body("POST", "/inferenceResults")["index"], 5)

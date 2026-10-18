@@ -610,14 +610,21 @@ def session_body(cfg, custom_id, cwd, production=True):
 
 
 def ensure_session(cfg, hook):
-    """The Galtea session id, created once. While another hook of the session is
-    creating it (the `creating` claim), wait for its result instead of creating a second."""
+    """The Galtea session id, created once per product. While another hook of the session
+    is creating it (the `creating` claim), wait for its result instead of creating a second.
+    When the configured product is not the one the session was made in, the conversation
+    starts again in the new product."""
     key = hook["session_id"]
     deadline = time.time() + WAIT
     while True:
         with State(key) as st:
             if st.get("galtea_session_id"):
-                return st["galtea_session_id"]
+                if st.get("product_id") == cfg["product_id"]:
+                    return st["galtea_session_id"]
+                for k in ("galtea_session_id", "metadata", "title_sent", "finished"):
+                    st.pop(k, None)
+                st["index"] = 0
+                log("session %s moves to product %s" % (key, cfg["product_id"]))
             now = time.time()
             if now - st.get("creating", 0) > WAIT or now > deadline:
                 st["creating"] = now
@@ -631,7 +638,7 @@ def ensure_session(cfg, hook):
         raise
     with State(key) as st:
         st.pop("creating", None)
-        st["galtea_session_id"] = sid
+        st["galtea_session_id"], st["product_id"] = sid, cfg["product_id"]
         st["index"] = max(st["index"], next_index)
         if meta is not None:
             st["metadata"] = meta

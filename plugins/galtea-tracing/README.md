@@ -20,7 +20,7 @@ The install dialog asks for four values:
 | Galtea API URL | Leave `https://api.galtea.ai`, unless you use a self-hosted Galtea. |
 | Redact secrets | On by default. See [Redaction](#redaction). |
 
-To change a value later, open `/plugin`, pick `galtea-tracing`, and edit its options.
+To change a value later, open `/plugin`, pick `galtea-tracing`, and edit its options. After a product change, a resumed conversation continues in a session of the new product: the plugin finds it by its `customId`, or creates it.
 
 The plugin needs Python 3.9 or later. It uses only the standard library.
 
