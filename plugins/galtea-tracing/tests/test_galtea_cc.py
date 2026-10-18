@@ -694,6 +694,30 @@ class TestConcurrency(Base):
         stop.join(5)
         self.assertEqual(done, ["turn", "finish"])
 
+    def test_session_end_waits_for_a_stop_that_has_not_started(self):
+        # an exit right after a reply: SessionEnd takes the lock before the Stop hook starts
+        done, waiting, real_sleep = [], threading.Event(), time.sleep
+        responses = ok_responses()
+        responses[("POST", "/inferenceResults")] = lambda body: done.append("turn") or {"id": "ir_1"}
+        responses[("PATCH", "/sessions/sess_1/finish")] = lambda body: done.append("finish") or {}
+        self.use_api(FakeApi(responses))
+        gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="hi")))
+        with mock.patch.object(gc.time, "sleep", lambda s: (waiting.set(), real_sleep(s))):
+            end = self.run_in_thread("SessionEnd", reason="other")
+            self.assertTrue(waiting.wait(2), "SessionEnd did not wait for the stored prompt")
+            gc.hook_main(json.dumps(self.hook("Stop", last_assistant_message="ok")))
+            end.join(10)
+        self.assertEqual(done, ["turn", "finish"])
+
+    def test_session_end_waits_only_briefly_for_an_interrupted_turn(self):
+        self.use_api(FakeApi(ok_responses()))
+        gc.hook_main(json.dumps(self.hook("UserPromptSubmit", prompt="interrupted, so no Stop")))
+        clock = iter(range(0, 10 ** 6))
+        with mock.patch.object(gc.time, "sleep"), mock.patch.object(gc.time, "time", lambda: next(clock)):
+            gc.hook_main(json.dumps(self.hook("SessionEnd", reason="other")))
+            spent = next(clock)
+        self.assertLessEqual(spent, gc.PENDING_GRACE + 3)
+
     def sent_turns(self, fake):
         return [(b["input"]["user_message"], b["actualOutput"], b["index"])
                 for m, p, b in fake.calls if m == "POST" and p == "/inferenceResults"]

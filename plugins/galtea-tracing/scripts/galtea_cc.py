@@ -50,6 +50,7 @@ MAX_SPAN_BYTES = 20000
 STATE_MAX_AGE = 7 * 24 * 3600
 WAIT = 40  # seconds a hook waits on another hook of its session: longer than one 30 s API call
 CHECK_BUDGET = 20  # seconds; the SessionStart hook times out at 30
+PENDING_GRACE = 5  # seconds SessionEnd waits for a Stop hook that has not started yet
 PENDING_MAX = 10  # unsent prompts kept per session: an interrupted turn gets no Stop to take its prompt
 SETTINGS_FILE = os.path.expanduser("~/.claude/settings.json")
 REDACTED = "[REDACTED]"
@@ -723,14 +724,17 @@ def sync_title(cfg, hook):
 
 
 def wait_for_turns(key):
-    """Wait until no Stop hook of the session is still sending its turn."""
-    deadline = time.time() + WAIT
+    """Wait until no Stop hook of the session is still sending its turn. A stored prompt
+    whose Stop has not started is waited for only PENDING_GRACE seconds, because an
+    interrupted turn never gets a Stop."""
+    start = time.time()
     while True:
         with State(key) as st:
             now = time.time()
             # a Stop hook killed mid-turn never clears its entry, so an old one is ignored
             st["inflight"] = {t: ts for t, ts in st.get("inflight", {}).items() if now - ts < WAIT}
-            if not st["inflight"] or now > deadline:
+            busy = st["inflight"] or (st.get("prompts") and now - start < PENDING_GRACE)
+            if not busy or now - start > WAIT:
                 return
         time.sleep(0.1)
 
