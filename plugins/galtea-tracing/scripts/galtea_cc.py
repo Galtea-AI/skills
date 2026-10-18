@@ -10,7 +10,8 @@ Run by the galtea-tracing plugin through scripts/run.sh:
                        then POST /traces/batch with the turn's steps, then the
                        session title to metadata when it changed
   hook SessionEnd   -> the session title, then PATCH /sessions/{id}/finish so
-                       Monitors score it
+                       Monitors score it; with a turn still being sent, no finish,
+                       and the platform's inactivity auto-close closes the session
   mute [data_dir]   -> stop logging for the current repository
   unmute [data_dir] -> start logging again
 
@@ -52,7 +53,7 @@ STATE_MAX_AGE = 7 * 24 * 3600
 WAIT = 40  # seconds a hook waits on another hook of its session: longer than one 30 s API call
 CHECK_BUDGET = 20  # seconds; the SessionStart hook times out at 30
 MID_SESSION_SOURCES = ("clear", "compact", "fork")
-PENDING_GRACE = 5  # seconds SessionEnd waits for a Stop hook that has not started yet
+INFLIGHT_MAX = 600  # seconds after which a Stop hook that never cleared its entry counts as killed
 PENDING_MAX = 10  # unsent prompts kept per session: an interrupted turn gets no Stop to take its prompt
 SETTINGS_FILE = os.path.expanduser("~/.claude/settings.json")
 REDACTED = "[REDACTED]"
@@ -725,7 +726,7 @@ def on_stop(cfg, hook):
     with State(key) as st:
         pending = take_prompt(st, hook.get("prompt_id"))
         if pending and not muted:
-            st.setdefault("inflight", {})[token] = time.time()  # SessionEnd waits for it
+            st.setdefault("inflight", {})[token] = time.time()  # SessionEnd leaves the session open
     if muted:
         return
     if not pending:
@@ -841,32 +842,24 @@ def sync_title(cfg, hook):
         log_exc("title not sent for session %s" % key)
 
 
-def wait_for_turns(key):
-    """Wait until no Stop hook of the session is still sending its turn. A stored prompt
-    whose Stop has not started is waited for only PENDING_GRACE seconds, because an
-    interrupted turn never gets a Stop."""
-    start = time.time()
-    while True:
-        with State(key) as st:
-            now = time.time()
-            # a Stop hook killed mid-turn never clears its entry, so an old one is ignored
-            st["inflight"] = {t: ts for t, ts in st.get("inflight", {}).items() if now - ts < WAIT}
-            busy = st["inflight"] or (st.get("prompts") and now - start < PENDING_GRACE)
-            if not busy or now - start > WAIT:
-                return
-        time.sleep(0.1)
-
-
 def on_end(cfg, hook):
+    """Finish the session, unless a Stop hook is still sending a turn: finishing then would
+    let monitors score the session before that turn's traces arrive. The platform's
+    inactivity auto-close closes it once they have."""
     key = hook["session_id"]
-    wait_for_turns(key)
     if not is_muted(hook.get("cwd")):
         sync_title(cfg, hook)
     with State(key) as st:
+        now = time.time()
+        busy = any(now - ts < INFLIGHT_MAX for ts in st.get("inflight", {}).values())
         sid = st.get("galtea_session_id")
-        if not sid or st["index"] == 0 or st.get("finished"):
-            return
-        st["finished"] = True
+        skip = not sid or st["index"] == 0 or st.get("finished") or busy
+        if not skip:
+            st["finished"] = True
+    if busy:
+        log("session %s is still sending a turn at its end; auto-close will close it" % key)
+    if skip:
+        return
     try:
         api(cfg, "PATCH", "/sessions/%s/finish" % sid,
             {"stoppingReason": "claude_code:%s" % hook.get("reason", "other")})

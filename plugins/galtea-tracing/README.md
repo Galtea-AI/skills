@@ -79,7 +79,7 @@ Claude Code writes thinking text to the transcript only when `showThinkingSummar
 
 ## When a session closes
 
-`/exit` closes the Galtea session, and Galtea monitors then evaluate it. If you close the terminal instead, the session can stay open. Galtea's auto-close then closes it after the product's inactivity time, 30 minutes by default. The setup check warns you when the product does not auto-close production sessions.
+`/exit` closes the Galtea session, and Galtea monitors then evaluate it. If you close the terminal instead, the session can stay open. Galtea's auto-close then closes it after the product's inactivity time, 30 minutes by default. Auto-close also closes the session when you exit while the plugin is still sending the last turn: the plugin leaves the session open so that monitors evaluate it with all its traces. The setup check warns you when the product does not auto-close production sessions.
 
 `claude --resume` on a closed session reopens it in Galtea, and monitors evaluate it again. This also works after the plugin's local state for the session is gone: the plugin finds the Galtea session by its `customId` and adds the new turns after the last one.
 
