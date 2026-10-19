@@ -18,9 +18,12 @@ Three reasons to state to a user who is about to write a loop:
 
 - **`test-cases create` is one HTTP request per row.** There is no batch create endpoint. Three
   hundred test cases is three hundred round trips, against one PUT plus one POST for the CSV.
-- **There is no empty-dataset mode.** Every dataset creation *without* a file goes down the
-  generation branch and calls a generator, which **consumes credits**. You cannot create a bare
-  dataset and fill it by hand for free.
+- **An empty dataset is free but slow to fill.** `galtea datasets create … empty: true` (CLI/API
+  only; the SDK has no option for it) creates a bare dataset you fill by hand, then each row is
+  its own `test-cases create` call. Any other creation *without* a file calls a generator, which
+  **consumes credits**. `empty: true` cannot be combined with a file, `sourceTestId` or a
+  generation field, `POST /tests/batch` refuses it, and running an empty dataset fails with `No
+  test cases found to process`.
 - **A dataset created from a file skips generation entirely.** No generation credit check, no
   `max_test_cases` ceiling, and the dataset is created already `SUCCESS` with every row
   persisted before the call returns. Skipping generation is not the same as a free import: a

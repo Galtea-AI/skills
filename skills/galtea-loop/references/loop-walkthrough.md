@@ -17,6 +17,8 @@ Mechanics the `galtea` skill already owns — install/auth, the `</dev/null` std
 - **The type parameter name split in the rename.** The wire field stays `testType`, so the CLI keeps `testType: SCENARIOS`. The SDK parameter is now `dataset_type` (and `dataset_variant`), with `test_type` / `test_variant` accepted as deprecated aliases that warn.
 - **`specifications.create` requires a `name`.** It is a required positional argument in the SDK and a 400 without it on the CLI, even though the published schema does not mark it required.
 - **The agent-callback entry point is `client.evaluations.run(version_id, agent, specification_ids)`** — not `traces.create_and_evaluate` (which logs one pre-computed output to a session).
+- **Versions are numbered automatically** (`v1`, `v2`, …); a name is optional and a name shaped like `v` + digits is refused unless it is that version's own label.
+- **Pass/fail is `passed`.** Every metric has a `pass_threshold` (default 0.5), and each evaluation carries `passed` against it.
 - **`datasets.create` returns no job id.** Generation is async — poll `client.datasets.get(id).status` until `SUCCESS`/`FAILED` (`DatasetStatus`: `PENDING`/`SUCCESS`/`FAILED`/`AUGMENTING`).
 
 ## Python SDK
@@ -61,7 +63,7 @@ cases = client.test_cases.list(dataset_id=dataset.id)   # inspect the generated 
 def my_agent(messages: list[dict]) -> str:      # annotate the first param deliberately
     return "Your billing cycle is monthly; charges occur on the 1st."   # your AI product
 
-version = client.versions.create(product_id=product.id, name="v1")
+version = client.versions.create(product_id=product.id)   # numbered v1, v2, ... automatically
 # evaluations.run drives the agent against the spec's datasets (via the conversation
 # simulator for Behavior) and scores each one with the linked metric.
 client.evaluations.run(version_id=version.id, agent=my_agent,
@@ -69,7 +71,7 @@ client.evaluations.run(version_id=version.id, agent=my_agent,
 
 # ── Read outcomes ───────────────────────────────────────────────────────
 for e in client.evaluations.list(version_id=version.id):
-    print(e.status, e.score, e.reason)
+    print(e.status, e.passed, e.score, e.reason)   # passed: verdict vs the metric's pass_threshold
 ```
 
 ## `galtea` CLI
@@ -87,7 +89,7 @@ SID=$(galtea specifications create productId: "$PID", \
       description: "Always states the billing cycle when asked about billing" \
       -o json </dev/null | jq -r .id)
 
-# Create a metric and link it to the POLICY spec (only POLICY specs take metrics).
+# Create a metric and link it to the POLICY spec (POLICY and CAPABILITY specs take metrics).
 # Pipe JSON on stdin: a comma inside the judgePrompt value misparses in the
 # colon-shorthand form (Restish reads it as a field separator) — verified to
 # fail against the live CLI. JSON-on-stdin is the robust form for any value
@@ -112,7 +114,7 @@ done
 # The CLI can't call a Python agent, so reach the product via the version's
 # EndpointConnection (wire one first — see the galtea skill), then run the
 # whole version. create-from-version cascades specs -> metrics -> datasets -> evaluations.
-VID=$(galtea versions create productId: "$PID", name: "v1" -o json </dev/null | jq -r .id)
+VID=$(galtea versions create productId: "$PID" -o json </dev/null | jq -r .id)   # numbered automatically
 galtea evaluations create-from-version versionId: "$VID" </dev/null   # see galtea skill's evaluate-version.md
 while [ "$(galtea evaluations list --version-ids "$VID" --statuses PENDING -o json | jq 'length')" -gt 0 ]; do
   sleep 5
@@ -122,7 +124,7 @@ done
 # An Evaluation carries metricId, not specificationId: the link to a spec runs
 # through the metric. To group by spec, filter one spec at a time.
 galtea evaluations list --version-ids "$VID" --specification-ids "$SID" -o json \
-  | jq '.[] | {id, metricId, status, score, reason}'
+  | jq '.[] | {id, metricId, status, passed, score, reason}'
 ```
 
 ## Stage 4 — iterate (both surfaces)
