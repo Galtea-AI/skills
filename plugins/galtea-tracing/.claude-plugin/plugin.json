@@ -12,7 +12,7 @@
     "api_key": {
       "type": "string",
       "title": "Galtea API key",
-      "description": "Your gsk_ key from the Galtea dashboard, Settings > API Keys. Kept in Claude Code's secure storage.",
+      "description": "Your gsk_ key from the Galtea dashboard, Settings > API Keys (an older gsk- key also works). Kept in Claude Code's secure storage.",
       "sensitive": true,
       "required": true
     },

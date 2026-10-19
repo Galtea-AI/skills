@@ -8,7 +8,8 @@ Run by the galtea-tracing plugin through scripts/run.sh:
   hook Stop         -> the Galtea session at the first turn sent, then
                        POST /inferenceResults (prompt + final assistant reply),
                        then POST /traces/batch with the turn's steps, then the
-                       session title to metadata when it changed
+                       session title to metadata when it changed. A Stop re-fired
+                       after another Stop hook blocked updates that turn instead
   hook SessionEnd   -> the session title, then PATCH /sessions/{id}/finish so
                        Monitors score it; with a turn still being sent, no finish,
                        and the platform's inactivity auto-close closes the session
@@ -49,8 +50,13 @@ DEFAULT_API_URL = "https://api.galtea.ai"
 AGENT_TOOLS = ("Agent", "Task")
 SPAN_BATCH = 100
 MAX_SPAN_BYTES = 20000
+# the prompt and the reply each; /inferenceResults takes a JSON body of at most 512 KB
+MAX_TURN_BYTES = 100000
 STATE_MAX_AGE = 7 * 24 * 3600
-WAIT = 40  # seconds a hook waits on another hook of its session: longer than one 30 s API call
+CREATE_BUDGET = 60  # seconds for the calls that find or create a session
+WAIT = 70  # seconds a hook waits on another hook of its session: longer than CREATE_BUDGET
+CONTINUE_WAIT = 120  # seconds a re-fired Stop waits for the Stop that sent its turn
+UNREACHABLE_RETRY = 600  # seconds before the check runs again against a host that did not answer
 # seconds for the check's steps, then for the self-test cleanup; the SessionStart hook times out at 30
 CHECK_BUDGET = 20
 CLEANUP_BUDGET = 6
@@ -108,10 +114,10 @@ def load_config():
     }
     if not cfg["api_key"] or not cfg["product_id"]:
         cfg["error"] = "Galtea tracing is installed but has no API key or product id. Set them with /plugin"
-    elif not cfg["api_key"].startswith("gsk_") or re.search(r"\s", cfg["api_key"]):
+    elif not cfg["api_key"].startswith(("gsk_", "gsk-")) or re.search(r"\s", cfg["api_key"]):
         # a space or line break would end up in an HTTP header error, which repeats the key
         cfg["error"] = ("Galtea tracing is off: the API key is not a Galtea API key. It starts with gsk_ "
-                        "and holds no spaces or line breaks. Set it with /plugin")
+                        "(gsk- for an older key) and holds no spaces or line breaks. Set it with /plugin")
     return cfg
 
 
@@ -138,7 +144,8 @@ def api(cfg, method, path, body=None, timeout=None):
                 raise RuntimeError("%s %s -> out of time" % (method, path))
     req = urllib.request.Request(
         cfg["api_url"].rstrip("/") + path,
-        data=json.dumps(body).encode() if body is not None else None,
+        # not ASCII-escaped: an escape would grow the body past the clipped size
+        data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None,
         method=method,
         headers={"Authorization": "Bearer " + cfg["api_key"], "Content-Type": "application/json"},
     )
@@ -261,20 +268,21 @@ _NAME = r"[\w.-]{0,64}?" + _KEYWORD + r"(?:s?(?![a-z])|(?-i:(?<=[a-z])(?=[A-Z]))
 _NOT_A_NUMBER = r"(?!\d+(?:[\s\"'`,;:.)\]}]|$))"
 # An unquoted value never ends in punctuation that closes a call, a list or a sentence.
 _VALUE = r"([^\s\"'`]{5,}[^\s\"'`),;:.\]}])"
-_CODE_REF = re.compile(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\(.*)?")
-_KEYWORD_RX = re.compile(r"(?i)" + _KEYWORD)
+# A quoted value runs to its closing quote, or to the end of the line when the quote is cut off.
+_QUOTED = r"([\"'])" + _NOT_A_NUMBER + r"((?:(?!\3)[^\\\n]|\\.){6,512})(?:\3|(?=\n)|$)"
+_CODE_REF = re.compile(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(\(.*)?")
 
 
 def _assignment(m):
-    """NAME=value with the value masked, unless it is unquoted code that names a
-    secret-named variable (password=password, max_tokens=max_tokens, settings.API_KEY).
-    A mixed-case word with no `_` or `.`, such as MyPassword, reads as a password."""
-    name, eq, quote, value = m.groups()
-    ref = None if quote else _CODE_REF.fullmatch(value)
-    ident = ref.group(1) if ref else ""
-    if _KEYWORD_RX.search(ident) and (ident.islower() or "_" in ident or "." in ident):
+    """NAME=value with the value masked. An unquoted value is kept when it is code: a call,
+    or a variable of the same name (password=password, api_key=settings.API_KEY)."""
+    name, value = m.group(1), m.group(5)
+    ref = _CODE_REF.fullmatch(value) if value else None
+    if ref and (ref.group(2) or ref.group(1).split(".")[-1].lower() == name.split(".")[-1].lower()):
         return m.group(0)
-    return name + eq + quote + REDACTED
+    g = 5 if value else 4
+    start, end = m.start(g) - m.start(), m.end(g) - m.start()
+    return m.group(0)[:start] + REDACTED + m.group(0)[end:]
 
 
 # (name, pattern, replacement). Each pattern is anchored by a literal prefix or a
@@ -282,7 +290,7 @@ def _assignment(m):
 RULES = [
     ("pem_private_key", re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----"
                                    r"(?:[\s\S]{0,8000}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|[\s\S]*)"), REDACTED),
-    ("galtea_key", re.compile(r"gsk_[A-Za-z0-9_-]{20,}"), REDACTED),
+    ("galtea_key", re.compile(r"gsk[_-][A-Za-z0-9_-]{20,}"), REDACTED),
     ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"), REDACTED),
     ("openai_project_key", re.compile(r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}"), REDACTED),
     ("openai_key", re.compile(r"(?<![\w-])sk-[A-Za-z0-9]{32,}"), REDACTED),
@@ -297,10 +305,14 @@ RULES = [
     ("bearer", re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1" + REDACTED),
     ("url_password", re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^\s:/@\"']{1,256}:)[^\s/@\"']{1,256}(@)"),
      r"\1" + REDACTED + r"\2"),
-    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=(?!=)\s*)([\"']?)" + _NOT_A_NUMBER + _VALUE),
-     _assignment),
-    ("json_field", re.compile(r"(?i)(\"" + _NAME + r"\"\s*:\s*\")" + _NOT_A_NUMBER + r"(?:[^\"\\]|\\.){6,}(\")"),
-     r"\1" + REDACTED + r"\2"),
+    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=(?!=)\s*)(?:" + _QUOTED + "|"
+                                  + _NOT_A_NUMBER + _VALUE + ")"), _assignment),
+    # "name": "value" in JSON, 'name': 'value' in a Python dict
+    ("json_field", re.compile(r"(?i)(([\"'])" + _NAME + r"\2\s*:\s*([\"']))" + _NOT_A_NUMBER
+                              + r"(?:(?!\3)[^\\]|\\.){6,}(\3)"), r"\1" + REDACTED + r"\4"),
+    # a line that is only `name: value`, as in YAML; it also masks a type in code, such as `password: string`
+    ("yaml_field", re.compile(r"(?im)^([ \t]*(?:-[ \t]+)?" + _NAME + r"[ \t]*:[ \t]+([\"']?))" + _NOT_A_NUMBER
+                              + r"[^\s{\[][^\n]{5,511}?(\2[ \t\r]*)$"), r"\1" + REDACTED + r"\3"),
 ]
 _SECRET_KEY = re.compile(r"(?i)" + _NAME)
 
@@ -514,8 +526,9 @@ def build_spans(lines, ir_id, cfg, parent_id, subagent_dir, totals, depth=0):
     return [{k: v for k, v in s.items() if v is not None} for s in out]
 
 
-def log_spans(cfg, hook, ir_id, wait=1.5):
-    """Each case that loses the turn's spans writes one log line, never transcript content."""
+def log_spans(cfg, hook, ir_id, wait=1.5, skip=0):
+    """(token totals, lines in the turn) for the spans of the turn's lines after the first
+    `skip`. Each case that loses the turn's spans writes one log line, never transcript content."""
     key, pid, path = hook["session_id"], hook.get("prompt_id"), hook.get("transcript_path")
     if not path:
         log("no transcript path for session %s; turn %s has no spans" % (key, ir_id))
@@ -533,13 +546,13 @@ def log_spans(cfg, hook, ir_id, wait=1.5):
         return None
     subagent_dir = os.path.join(os.path.dirname(path), key, "subagents")
     totals = {}
-    spans = build_spans(lines, ir_id, cfg, None, subagent_dir, totals)
+    spans = build_spans(lines[skip:], ir_id, cfg, None, subagent_dir, totals)
     for i in range(0, len(spans), SPAN_BATCH):
         res = api(cfg, "POST", "/traces/batch?includeRejected=true", {"traces": spans[i:i + SPAN_BATCH]})
         rej = (res.get("partialSuccess") or {}).get("errors") if isinstance(res, dict) else None
         if rej:
             log("rejected spans for %s: %s" % (ir_id, json.dumps(rej)[:1000]))
-    return totals
+    return totals, len(lines)
 
 
 # --- git and mute ----------------------------------------------------------
@@ -631,7 +644,7 @@ def ensure_session(cfg, hook):
             if st.get("galtea_session_id"):
                 if st.get("product_id") == cfg["product_id"]:
                     return st["galtea_session_id"]
-                for k in ("galtea_session_id", "metadata", "title_sent", "finished"):
+                for k in ("galtea_session_id", "metadata", "title_sent", "finished", "last_turn"):
                     st.pop(k, None)
                 st["index"] = 0
                 log("session %s moves to product %s" % (key, cfg["product_id"]))
@@ -641,7 +654,7 @@ def ensure_session(cfg, hook):
                 break
         time.sleep(0.1)
     try:
-        sid, next_index, meta = create_session(cfg, hook)
+        sid, next_index, meta = create_session(dict(cfg, deadline=time.time() + CREATE_BUDGET), hook)
     except Exception:
         with State(key) as st:
             st.pop("creating", None)
@@ -689,24 +702,31 @@ def post_turn(cfg, sid, index, pending, hook):
         "sessionId": sid,
         "index": index,
         "status": "GENERATED",
-        "input": {"user_message": clean(cfg, pending["prompt"])},
-        "actualOutput": clean(cfg, hook.get("last_assistant_message") or ""),
+        "input": {"user_message": clean(cfg, pending["prompt"], MAX_TURN_BYTES)},
+        "actualOutput": clean(cfg, hook.get("last_assistant_message") or "", MAX_TURN_BYTES),
         "latency": int((time.time() - pending["ts"]) * 1000),
     })
 
 
-def post_spans(cfg, hook, ir_id, wait=1.5):
-    """Spans and token counts for one turn. A failure is logged; the turn stays."""
+def post_spans(cfg, hook, ir_id, wait=1.5, sent=None):
+    """Spans and token counts for one turn, after the lines and totals in `sent`. Returns
+    the new `sent`, or None on failure, which is logged; the turn stays."""
+    sent = sent or {"lines": 0, "totals": {}}
     try:
-        totals = log_spans(cfg, hook, ir_id, wait)
-        if totals:
+        res = log_spans(cfg, hook, ir_id, wait, sent["lines"])
+        if not res:
+            return None
+        new, count = res
+        totals = {k: sent["totals"].get(k, 0) + new.get(k, 0) for k in ("in", "out", "cache")}
+        if new:
             # no `tokens`: the API derives it, and has no cache-creation field to add
             api(cfg, "PATCH", "/inferenceResults/%s" % ir_id, {
-                "inputTokens": totals.get("in", 0), "outputTokens": totals.get("out", 0),
-                "cacheReadInputTokens": totals.get("cache", 0),
+                "inputTokens": totals["in"], "outputTokens": totals["out"], "cacheReadInputTokens": totals["cache"],
             })
+        return {"lines": count, "totals": totals}
     except Exception:
         log_exc("spans failed for %s" % ir_id)
+        return None
 
 
 def on_prompt(cfg, hook):
@@ -742,17 +762,20 @@ def on_stop(cfg, hook):
     token = uuid.uuid4().hex
     with State(key) as st:
         pending = take_prompt(st, hook.get("prompt_id"))
-        if pending and not muted:
+        # a Stop re-fired by a blocking Stop hook has stop_hook_active set and no new prompt
+        refire = not pending and hook.get("stop_hook_active")
+        if (pending or refire) and not muted:
             st.setdefault("inflight", {})[token] = time.time()  # SessionEnd leaves the session open
     if muted:
         return
-    if not pending:
-        # a Stop re-fired by a blocking Stop hook has stop_hook_active set and no new prompt
-        if not hook.get("stop_hook_active"):
-            log("Stop of session %s has no stored prompt; its turn is not sent" % key)
+    if not pending and not refire:
+        log("Stop of session %s has no stored prompt; its turn is not sent" % key)
         return
     try:
-        send_turn(cfg, hook, pending)
+        if pending:
+            send_turn(cfg, hook, pending)
+        else:
+            continue_turn(cfg, hook, token)
     finally:
         with State(key) as st:
             st.get("inflight", {}).pop(token, None)
@@ -787,25 +810,71 @@ def drop_empty_session(cfg, key, sid):
 
 def send_turn(cfg, hook, pending):
     key = hook["session_id"]
-    index = sid = None
-    try:
-        sid, index = claim_turn(cfg, hook)
-        ir = post_turn(cfg, sid, index, pending, hook)
-    except Exception as e:
-        log_exc("turn not sent for session %s" % key)
-        # only a 4xx proves the server stored nothing; after a timeout or a 5xx it may have
-        # stored the turn, and a gap in the indexes is harmless where a duplicate is not
-        if index is not None and isinstance(e, ApiError) and 400 <= e.status < 500:
-            with State(key) as st:
-                if st["index"] == index + 1:  # no later turn took the next index
-                    st["index"] = index
-            drop_empty_session(cfg, key, sid)
-        return
+    for attempt in (1, 2):
+        index = sid = None
+        try:
+            sid, index = claim_turn(cfg, hook)
+            ir = post_turn(cfg, sid, index, pending, hook)
+            break
+        except Exception as e:
+            # only a 4xx proves the server stored nothing; after a timeout or a 5xx it may have
+            # stored the turn, and a gap in the indexes is harmless where a duplicate is not
+            refused = index is not None and isinstance(e, ApiError) and 400 <= e.status < 500
+            if refused and e.status == 404 and attempt == 1:
+                forget_session(key, sid)
+                continue
+            log_exc("turn not sent for session %s" % key)
+            if refused:
+                with State(key) as st:
+                    if st["index"] == index + 1:  # no later turn took the next index
+                        st["index"] = index
+                drop_empty_session(cfg, key, sid)
+            return
     with State(key) as st:
         st.pop("finished", None)  # a resumed session was reopened by this turn
     hook["prompt_id"] = hook.get("prompt_id") or pending.get("prompt_id")
-    post_spans(cfg, hook, ir["id"])
+    sent = post_spans(cfg, hook, ir["id"]) or {"lines": 0, "totals": {}}
+    with State(key) as st:
+        st["last_turn"] = dict(sent, prompt_id=hook["prompt_id"], ir_id=ir["id"])
     sync_title(cfg, hook)
+
+
+def forget_session(key, sid):
+    """The session was deleted in Galtea: the next claim creates it again, from turn 0."""
+    log("session %s is gone from Galtea; creating it again" % sid)
+    with State(key) as st:
+        if st.get("galtea_session_id") == sid:
+            for k in ("galtea_session_id", "metadata", "title_sent", "finished", "last_turn"):
+                st.pop(k, None)
+            st["index"] = 0
+
+
+def continue_turn(cfg, hook, token):
+    """A blocking Stop hook made Claude continue the last turn. Its final reply replaces
+    the turn's output, and only the steps after the ones already sent are added. Waits
+    for the Stop that sends the turn, which can still be running."""
+    key = hook["session_id"]
+    deadline = time.time() + CONTINUE_WAIT
+    while True:
+        with State(key) as st:
+            now = time.time()
+            busy = any(t != token and now - ts < INFLIGHT_MAX for t, ts in st.get("inflight", {}).items())
+            last = st.get("last_turn")
+        if not busy or now > deadline:
+            break
+        time.sleep(0.2)
+    pid = hook.get("prompt_id")
+    if not last or (pid and last.get("prompt_id") and pid != last["prompt_id"]):
+        log("Stop of session %s continued a turn that was not sent; its steps are not sent" % key)
+        return
+    hook = dict(hook, prompt_id=pid or last.get("prompt_id"))
+    api(cfg, "PATCH", "/inferenceResults/%s" % last["ir_id"],
+        {"actualOutput": clean(cfg, hook.get("last_assistant_message") or "", MAX_TURN_BYTES)})
+    sent = post_spans(cfg, hook, last["ir_id"], sent=last)
+    if sent:
+        with State(key) as st:
+            if (st.get("last_turn") or {}).get("ir_id") == last["ir_id"]:
+                st["last_turn"].update(sent)
 
 
 def read_title(path):
@@ -978,7 +1047,7 @@ def delete_selftest_session(cfg, custom_id, sid, create_sent):
 
 
 def run_check(cfg):
-    """Returns (ok, message) for the SessionStart systemMessage."""
+    """Returns (ok, message, unreachable) for the SessionStart systemMessage."""
     start = time.time()
     cfg = dict(cfg, deadline=start + CHECK_BUDGET, cleanup_deadline=start + CHECK_BUDGET + CLEANUP_BUDGET)
     try:
@@ -987,26 +1056,46 @@ def run_check(cfg):
         log_exc("check: product lookup failed")
         if isinstance(e, ApiError) and e.status in (401, 403, 404):
             return False, ("Galtea tracing is not working: the API key or product id was refused (%s). "
-                           "Fix them with /plugin, then start a new session." % str(e)[:200])
+                           "Fix them with /plugin, then start a new session." % str(e)[:200]), False
+        if isinstance(e, ApiError):
+            return False, ("Galtea tracing got an error from Galtea at %s (%s). The check runs again when "
+                           "you next start or resume a session." % (cfg["api_url"], str(e)[:200])), False
         return False, ("Galtea tracing could not reach Galtea at %s (%s). Sessions are not sent while it "
-                       "is unreachable. The check runs again when you next start or resume a session."
-                       % (cfg["api_url"], str(e)[:200]))
+                       "is unreachable. The check runs again at a session start after %d minutes."
+                       % (cfg["api_url"], str(e)[:200], UNREACHABLE_RETRY // 60)), True
     notes = []
     scope = product.get("autoCloseScope")
     if scope in ("NONE", "DEVELOPMENT"):
         notes.append("This product does not auto-close production sessions (autoCloseScope=%s). "
                      "A session you leave without /exit stays open and is never evaluated. "
                      "Set auto-close to ALL or PRODUCTION in the product settings." % scope)
+    policy = product.get("closedSessionInferenceCreationPolicy")
+    if policy in ("IGNORE", "REJECT"):
+        verb = {"IGNORE": "drops", "REJECT": "refuses"}[policy]
+        notes.append("This product %s new turns on a closed session (closedSessionInferenceCreationPolicy=%s). "
+                     "A conversation you continue after its session closed is not logged. Set the policy to "
+                     "REOPEN_AND_REEVALUATE in the product settings." % (verb, policy))
     if not thinking_summaries_on():
         notes.append('Thinking is not logged. To log it, add "showThinkingSummaries": true to ~/.claude/settings.json.')
     ok, detail = self_test(cfg)
     if not ok:
-        return False, "Galtea tracing self-test failed (%s). See %s." % (detail, data_path("hook.log"))
+        return False, "Galtea tracing self-test failed (%s). See %s." % (detail, data_path("hook.log")), False
     minutes = product.get("autoCloseInactivityMinutes")
     head = "Galtea tracing is on. Sessions go to product %s." % (product.get("name") or cfg["product_id"])
     if scope in ("ALL", "PRODUCTION") and minutes:
         head += " A session closes after %s minutes without activity." % minutes
-    return True, " ".join([head] + notes)
+    return True, " ".join([head] + notes), False
+
+
+def read_marker(name, max_age=None):
+    """The fingerprint in a marker file; None when it is missing or older than max_age seconds."""
+    try:
+        if max_age is not None and os.path.getmtime(data_path(name)) < time.time() - max_age:
+            return None
+        with open(data_path(name), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
 
 
 def on_start(cfg, hook):
@@ -1016,16 +1105,13 @@ def on_start(cfg, hook):
     if hook.get("source") in MID_SESSION_SOURCES:
         return None
     fp = fingerprint(cfg)
-    try:
-        with open(data_path("checked"), encoding="utf-8") as f:
-            if f.read().strip() == fp:
-                return None
-    except OSError:
-        pass
-    ok, message = run_check(cfg)
-    if ok:
+    # a host that did not answer stalled the last start for the whole check: wait before the next try
+    if fp in (read_marker("checked"), read_marker("unreachable", UNREACHABLE_RETRY)):
+        return None
+    ok, message, unreachable = run_check(cfg)
+    if ok or unreachable:
         os.makedirs(data_dir(), exist_ok=True)
-        with open(data_path("checked"), "w", encoding="utf-8") as f:
+        with open(data_path("checked" if ok else "unreachable"), "w", encoding="utf-8") as f:
             f.write(fp)
     return {"systemMessage": message}
 

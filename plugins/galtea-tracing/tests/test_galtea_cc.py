@@ -50,6 +50,7 @@ SAMPLES = {
     "url_password": ("postgres://admin:hunter2pass@db.example.com:5432/app", "hunter2pass"),
     "env_assignment": ("export DATABASE_PASSWORD=s3cr3tValue", "s3cr3tValue"),
     "json_field": ('{"client_secret": "abcdef123456"}', "abcdef123456"),
+    "yaml_field": ("db:\n  password: s3cr3tValue99\n", "s3cr3tValue99"),
 }
 
 
@@ -59,12 +60,14 @@ class FakeApi:
     def __init__(self, responses=None, fail=None):
         self.calls = []
         self.timeouts = []
+        self.deadlines = []
         self.responses = responses or {}
         self.fail = fail or ()
 
     def __call__(self, cfg, method, path, body=None, timeout=None):
         self.calls.append((method, path, body))
         self.timeouts.append(timeout)
+        self.deadlines.append(cfg.get("deadline"))
         for m, prefix, *exc in self.fail:
             if m == method and path.startswith(prefix):
                 raise exc[0] if exc else RuntimeError("%s %s -> 500" % (method, path))
@@ -189,6 +192,12 @@ class TestConfig(Base):
         self.assertEqual(gc.load_config()["api_url"], "https://example.invalid")
         del os.environ["CLAUDE_PLUGIN_OPTION_API_URL"]
         self.assertEqual(gc.load_config()["api_url"], gc.DEFAULT_API_URL)
+
+    def test_an_older_gsk_dash_key_is_accepted(self):
+        os.environ["CLAUDE_PLUGIN_OPTION_API_KEY"] = "gsk-0123456789abcdef"
+        self.assertIsNone(gc.load_config()["error"])
+        os.environ["CLAUDE_PLUGIN_OPTION_API_KEY"] = "sk-0123456789abcdef"
+        self.assertIn("not a Galtea API key", gc.load_config()["error"])
 
     def run_main(self, event, **kw):
         out = io.StringIO()
@@ -406,6 +415,44 @@ class TestTurn(Base):
         self.assertNotIn("gsk_", tool["outputData"])
         self.assertIn(gc.REDACTED, tool["outputData"])
 
+    def test_a_long_prompt_and_reply_fit_the_api_body_limit(self):
+        fake = self.use_api(FakeApi(ok_responses()))
+        big = "\U0001F600" * 150000  # 600 KB of 4-byte characters, 12 bytes each when ASCII-escaped
+        self.run_hook("UserPromptSubmit", prompt=big)
+        self.run_hook("Stop", last_assistant_message=big)
+        body = fake.body("POST", "/inferenceResults")
+        for field in (body["input"]["user_message"], body["actualOutput"]):
+            self.assertIn("[truncated", field)
+            self.assertLessEqual(len(field.encode()), 100000 + 40)
+        sent = {}
+
+        def capture(req, timeout):
+            sent["data"] = req.data
+            raise urllib.error.URLError("captured")
+        with mock.patch.object(gc.urllib.request, "urlopen", side_effect=capture), self.assertRaises(OSError):
+            REAL_API(gc.load_config(), "POST", "/inferenceResults", body)
+        self.assertLess(len(sent["data"]), 512 * 1024)
+
+    def test_a_session_deleted_in_galtea_is_created_again(self):
+        ids = iter(["sess_1", "sess_2"])
+        seen = []
+
+        def turn(body):
+            seen.append((body["sessionId"], body["index"]))
+            if len(seen) == 2:  # the session was deleted after the first turn
+                raise gc.ApiError("POST", "/inferenceResults", 404, b"session not found")
+            return {"id": "ir_%d" % len(seen)}
+        responses = ok_responses()
+        responses[("POST", "/sessions")] = lambda body: {"id": next(ids)}
+        responses[("POST", "/inferenceResults")] = turn
+        fake = self.use_api(FakeApi(responses))
+        for prompt in ("one", "two", "three"):
+            self.run_hook("UserPromptSubmit", prompt=prompt)
+            self.run_hook("Stop", last_assistant_message=prompt)
+        self.assertEqual(seen, [("sess_1", 0), ("sess_1", 1), ("sess_2", 0), ("sess_2", 1)])
+        self.assertEqual(fake.paths("POST").count("/sessions"), 2)
+        self.assertEqual(fake.paths("DELETE"), [])
+
     def test_prompt_and_reply_are_redacted(self):
         fake = self.use_api(FakeApi(ok_responses()))
         with mock.patch.object(gc.time, "sleep"):
@@ -576,15 +623,46 @@ class TestCheck(Base):
                 self.assertEqual(os.path.exists(marker), kept)
 
     def test_unreachable_galtea_is_not_called_refused(self):
-        for err in (urllib.error.URLError("Name or service not known"), socket.timeout("timed out"),
-                    gc.ApiError("GET", "/products/prod_1", 502, b"bad gateway")):
+        for err in (urllib.error.URLError("Name or service not known"), socket.timeout("timed out")):
             with self.subTest(err=repr(err)):
-                self.use_api(FakeApi(fail=[("GET", "/products/", err)]))
+                shutil.rmtree(self.data, True)
+                fake = self.use_api(FakeApi(fail=[("GET", "/products/", err)]))
                 msg = self.start()["systemMessage"]
                 self.assertNotIn("refused", msg)
                 self.assertIn("could not reach Galtea", msg)
-                self.assertIn("next start or resume a session", msg)
+                self.assertIn("after 10 minutes", msg)
                 self.assertFalse(os.path.exists(os.path.join(self.data, "checked")))
+                # the next start within 10 minutes is not stalled by the same host again
+                self.assertIsNone(self.start())
+                self.assertEqual(len(fake.calls), 1)
+                later = time.time() + 601
+                with mock.patch.object(gc.time, "time", lambda: later):
+                    self.assertIn("could not reach Galtea", self.start()["systemMessage"])
+                self.assertEqual(len(fake.calls), 2)
+
+    def test_an_error_from_galtea_is_not_called_unreachable(self):
+        err = gc.ApiError("GET", "/products/prod_1", 502, b"bad gateway")
+        fake = self.use_api(FakeApi(fail=[("GET", "/products/", err)]))
+        msg = self.start()["systemMessage"]
+        self.assertIn("got an error from Galtea", msg)
+        self.assertNotIn("could not reach", msg)
+        self.assertIsNotNone(self.start())
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_warns_when_a_closed_session_drops_new_turns(self):
+        for policy, verb in (("IGNORE", "drops"), ("REJECT", "refuses"), ("REOPEN_AND_REEVALUATE", None)):
+            with self.subTest(policy=policy):
+                shutil.rmtree(self.data, True)
+                responses = ok_responses()
+                responses[("GET", "/products/")] = dict(responses[("GET", "/products/")],
+                                                        closedSessionInferenceCreationPolicy=policy)
+                self.use_api(FakeApi(responses))
+                msg = self.start()["systemMessage"]
+                if verb:
+                    self.assertIn("This product %s new turns on a closed session "
+                                  "(closedSessionInferenceCreationPolicy=%s)" % (verb, policy), msg)
+                else:
+                    self.assertNotIn("closedSessionInferenceCreationPolicy", msg)
 
     def test_warns_on_auto_close_and_thinking_summaries(self):
         responses = ok_responses()
@@ -646,7 +724,8 @@ class TestRedaction(unittest.TestCase):
                      "self.access_token = access_token", "if token==expected_token:",
                      "api_key=settings.API_KEY", "password = get_password(user)", "max_tokens=100000.",
                      # the keyword inside a longer word is not a secret name
-                     '{"tokenizer": "cl100k_base"}', "TOKENIZER_PATH=/models/cl100k_base"):
+                     '{"tokenizer": "cl100k_base"}', "TOKENIZER_PATH=/models/cl100k_base",
+                     "tokenizer: cl100k_base", "max_tokens: 4096", "token: true", "password:"):
             with self.subTest(text=text):
                 self.assertEqual(gc.redact(text), text)
         self.assertEqual(gc.redact({"max_tokens": "100000"}), {"max_tokens": "100000"})
@@ -667,6 +746,21 @@ class TestRedaction(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(gc.redact(text), out)
         self.assertEqual(gc.redact({"clientSecret": "abcdef123456"}), {"clientSecret": r})
+
+    def test_common_secret_forms_are_redacted(self):
+        r = gc.REDACTED
+        for text, out in (("PASSWORD=supersecret", "PASSWORD=%s" % r),
+                          ("DB_PASSWORD=mypassword123", "DB_PASSWORD=%s" % r),
+                          ("export API_KEY=sk_live_token_abc123", "export API_KEY=%s" % r),
+                          ("password: s3cr3tValue99", "password: %s" % r),
+                          ("db:\n  api_key: abcdef123456xyz\n  host: x", "db:\n  api_key: %s\n  host: x" % r),
+                          ("- token: 'abc def ghi'", "- token: '%s'" % r),
+                          ("{'api_key': 'abcdef123456'}", "{'api_key': '%s'}" % r),
+                          ('PASSWORD="correct horse battery" next', 'PASSWORD="%s" next' % r),
+                          ('PASSWORD="cut off value\nnext', 'PASSWORD="%s\nnext' % r),
+                          ("key gsk-0123456789abcdefABCDEF", "key %s" % r)):
+            with self.subTest(text=text):
+                self.assertEqual(gc.redact(text), out)
 
     def test_a_number_prefix_does_not_save_a_secret(self):
         self.assertEqual(gc.redact("GITHUB_TOKEN=123456abcdef"), "GITHUB_TOKEN=" + gc.REDACTED)
@@ -705,6 +799,82 @@ class TestRedaction(unittest.TestCase):
                 elapsed = time.perf_counter() - start
                 with self.subTest(rule=name, head=text[:24]):
                     self.assertLess(elapsed, 0.05)
+
+
+class TestTraces(Base):
+    """The transcript of one turn becomes its spans."""
+
+    def send(self, lines, subagents=None):
+        path = self.transcript(lines)
+        for agent_id, sub in (subagents or {}).items():
+            sub_dir = os.path.join(self.tmp, "s1", "subagents")
+            os.makedirs(sub_dir, exist_ok=True)
+            with open(os.path.join(sub_dir, "agent-%s.jsonl" % agent_id), "w", encoding="utf-8") as f:
+                f.write("\n".join(json.dumps(x) for x in sub) + "\n")
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="done")
+        return [t for m, p, b in fake.calls if p.startswith("/traces/batch") for t in b["traces"]]
+
+    def test_every_trace_field_is_redacted(self):
+        secret = "gsk_" + "S" * 40
+        traces = self.send([
+            {"type": "user", "promptId": "p1", "message": {"content": "hi"}},
+            {"type": "assistant", "message": {"id": "m1", "content": [
+                {"type": "thinking", "thinking": "think " + secret},
+                {"type": "text", "text": "text " + secret},
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "echo " + secret}}]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": "error " + secret}]}},
+        ])
+        gen = next(t for t in traces if t["type"] == "GENERATION")
+        tool = next(t for t in traces if t["type"] == "TOOL")
+        fields = {"thinking": gen["outputData"]["thinking"], "text": gen["outputData"]["text"],
+                  "tool input": tool["inputData"]["input"]["command"], "tool output": tool["outputData"],
+                  "tool error": tool["error"]}
+        for name, value in fields.items():
+            with self.subTest(field=name):
+                self.assertIn(gc.REDACTED, value)
+                self.assertNotIn(secret, value)
+
+    def test_a_long_trace_field_is_cut_at_20_kb(self):
+        traces = self.send([
+            {"type": "user", "promptId": "p1", "message": {"content": "hi"}},
+            {"type": "assistant", "message": {"id": "m1", "content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cat big"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                                      "content": "x" * 50000}]}},
+        ])
+        out = next(t for t in traces if t["type"] == "TOOL")["outputData"]
+        self.assertIn("[truncated 30000 bytes]", out)
+        self.assertLessEqual(len(out.encode()), 20000 + 40)
+
+    def test_subagents_sidechains_and_split_model_calls(self):
+        traces = self.send([
+            {"type": "user", "promptId": "p1", "message": {"content": "hi"}},
+            # one model call written as two lines with the same message id
+            {"type": "assistant", "message": {"id": "m1", "model": "claude", "usage": {"input_tokens": 1},
+                                              "content": [{"type": "text", "text": "part one"}]}},
+            {"type": "assistant", "message": {"id": "m1", "model": "claude", "usage": {"input_tokens": 1},
+                                              "content": [{"type": "tool_use", "id": "t1", "name": "Agent",
+                                                           "input": {"prompt": "look"}}]}},
+            {"type": "assistant", "isSidechain": True, "message": {"id": "side", "content": [
+                {"type": "text", "text": "SIDECHAIN"}]}},
+            {"type": "user", "toolUseResult": {"agentId": "a1"}, "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "found"}]}},
+        ], subagents={"a1": [
+            {"type": "user", "message": {"content": "look"}},
+            {"type": "assistant", "message": {"id": "sub1", "model": "claude-sub", "content": [
+                {"type": "tool_use", "id": "t9", "name": "Grep", "input": {"pattern": "x"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t9", "content": "1"}]}},
+        ]})
+        self.assertEqual([t["name"] for t in traces], ["llm:claude", "agent:Agent", "llm:claude-sub", "tool:Grep"])
+        self.assertEqual(traces[0]["outputData"]["text"], "part one")
+        agent = traces[1]
+        self.assertNotIn("parentTraceId", agent)
+        self.assertEqual([t.get("parentTraceId") for t in traces[2:]], [agent["id"]] * 2)
+        self.assertNotIn("SIDECHAIN", json.dumps(traces))
 
 
 class TestResume(Base):
@@ -781,6 +951,20 @@ class TestResume(Base):
             log = f.read()
         self.assertIn("turn not sent for session s1", log)
         self.assertIn("already exists", log)
+
+    def test_session_creation_ends_before_a_waiting_hook_takes_over(self):
+        fake = self.use_api(FakeApi(ok_responses()))
+        start = time.time()
+        self.run_hook("UserPromptSubmit", prompt="hi")
+        self.run_hook("Stop", last_assistant_message="ok")
+        create = [d for (m, p, b), d in zip(fake.calls, fake.deadlines) if p.startswith("/sessions")]
+        self.assertEqual(len(create), 2)  # the lookup, then the create
+        for deadline in create:
+            self.assertIsNotNone(deadline)
+            self.assertLessEqual(deadline, time.time() + gc.CREATE_BUDGET)
+            self.assertGreaterEqual(deadline, start + gc.CREATE_BUDGET)
+        self.assertGreater(gc.WAIT, gc.CREATE_BUDGET)
+        self.assertGreaterEqual(gc.CREATE_BUDGET, 30)  # room for one call at the default timeout
 
     def test_a_new_conversation_is_created_after_one_lookup(self):
         fake = self.resume([], found=[])
@@ -885,7 +1069,28 @@ class TestConcurrency(Base):
     def run_in_thread(self, event, **kw):
         t = threading.Thread(target=gc.hook_main, args=(json.dumps(self.hook(event, **kw)),), daemon=True)
         t.start()
+        # a thread that outlived its test would call the next test's fake API
+        self.addCleanup(self.assert_finished, t)
         return t
+
+    def assert_finished(self, thread):
+        thread.join(5)
+        self.assertFalse(thread.is_alive(), "a hook thread outlived its test")
+
+    def test_state_lock_blocks_a_second_opener(self):
+        started, entered = threading.Event(), threading.Event()
+
+        def second():
+            started.set()
+            with gc.State("s1"):
+                entered.set()
+        with gc.State("s1"):
+            t = threading.Thread(target=second, daemon=True)
+            t.start()
+            self.addCleanup(self.assert_finished, t)
+            self.assertTrue(started.wait(2))
+            self.assertFalse(entered.wait(0.3))
+        self.assertTrue(entered.wait(2))
 
     def state_is_free(self):
         """True when another opener gets the state lock within 2 s."""
@@ -1045,13 +1250,77 @@ class TestConcurrency(Base):
         with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
             self.assertEqual(f.read().count("session s1 dropped its oldest unsent prompt"), 5)
 
+    def continued_turn(self):
+        """A turn, then Claude continuing it after another plugin's Stop hook blocked."""
+        first = [
+            {"type": "user", "promptId": "p1", "message": {"content": "hi"}},
+            {"type": "assistant", "message": {"id": "m1", "model": "claude", "usage": {"input_tokens": 10},
+                                              "content": [{"type": "text", "text": "first reply"}]}},
+        ]
+        more = [
+            {"type": "user", "promptId": "p1", "isMeta": True, "message": {"content": "Stop hook feedback"}},
+            {"type": "assistant", "message": {"id": "m2", "model": "claude", "usage": {"input_tokens": 5},
+                                              "content": [{"type": "tool_use", "id": "t2", "name": "Bash",
+                                                           "input": {"command": "make test"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t2", "content": "ok"}]}},
+        ]
+        return first, more
+
+    def test_a_stop_after_a_blocking_stop_hook_updates_its_turn(self):
+        first, more = self.continued_turn()
+        path = os.path.join(self.tmp, "t.jsonl")
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.transcript(first)
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="first reply")
+            self.transcript(first + more)
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="final reply", stop_hook_active=True)
+        self.assertEqual(fake.paths("POST").count("/inferenceResults"), 1)
+        patches = [b for m, p, b in fake.calls if (m, p) == ("PATCH", "/inferenceResults/ir_1")]
+        self.assertIn({"actualOutput": "final reply"}, patches)
+        self.assertEqual(patches[-1], {"inputTokens": 15, "outputTokens": 0, "cacheReadInputTokens": 0})
+        batches = [[t["name"] for t in b["traces"]] for m, p, b in fake.calls if p.startswith("/traces/batch")]
+        self.assertEqual(batches, [["llm:claude"], ["llm:claude", "tool:Bash"]])
+
+    def test_a_stop_after_a_blocking_stop_hook_waits_for_the_turn(self):
+        first, more = self.continued_turn()
+        path = self.transcript(first + more)
+        release, first_in, waiting = threading.Event(), threading.Event(), threading.Event()
+        real_sleep = time.sleep
+
+        def turn(body):
+            first_in.set()
+            release.wait(5)
+            return {"id": "ir_1"}
+
+        def sleep(seconds):
+            waiting.set()
+            real_sleep(0.01)
+        responses = ok_responses()
+        responses[("POST", "/inferenceResults")] = turn
+        fake = self.use_api(FakeApi(responses))
+        self.run_hook("UserPromptSubmit", prompt="hi")
+        with mock.patch.object(gc.time, "sleep", sleep):
+            stop = self.run_in_thread("Stop", transcript_path=path, last_assistant_message="first reply")
+            self.assertTrue(first_in.wait(2))
+            refire = self.run_in_thread("Stop", transcript_path=path, last_assistant_message="final reply",
+                                        stop_hook_active=True)
+            self.assertTrue(waiting.wait(2))  # the re-fired Stop waits while the turn is being sent
+            release.set()
+            stop.join(5)
+            refire.join(5)
+        self.assertIn(("PATCH", "/inferenceResults/ir_1", {"actualOutput": "final reply"}), fake.calls)
+
     def test_a_stop_with_no_stored_prompt_is_logged(self):
-        self.use_api(FakeApi(ok_responses()))
-        self.run_hook("Stop", last_assistant_message="ok", stop_hook_active=True)
-        self.assertFalse(os.path.exists(os.path.join(self.data, "hook.log")))
+        fake = self.use_api(FakeApi(ok_responses()))
         self.run_hook("Stop", last_assistant_message="ok", stop_hook_active=False)
+        self.run_hook("Stop", last_assistant_message="ok", stop_hook_active=True)
         with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
-            self.assertIn("Stop of session s1 has no stored prompt", f.read())
+            log = f.read()
+        self.assertIn("Stop of session s1 has no stored prompt", log)
+        self.assertIn("Stop of session s1 continued a turn that was not sent", log)
+        self.assertEqual(fake.calls, [])
 
     def test_a_refused_turn_is_logged_and_frees_its_index(self):
         err = gc.ApiError("POST", "/inferenceResults", 400, b"bad")

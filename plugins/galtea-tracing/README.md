@@ -15,7 +15,7 @@ The install dialog asks for four values:
 
 | Option | What to enter |
 |---|---|
-| Galtea API key | Your `gsk_` key from the Galtea dashboard, **Settings → API Keys**. Claude Code keeps it in its secure storage. |
+| Galtea API key | Your `gsk_` key from the Galtea dashboard, **Settings → API Keys**. An older `gsk-` key also works. Claude Code keeps it in its secure storage. |
 | Galtea product id | The product that receives your sessions. Copy the id from the product page. |
 | Galtea API URL | Leave `https://api.galtea.ai`, unless you use a self-hosted Galtea. |
 | Redact secrets | On by default. See [Redaction](#redaction). |
@@ -29,13 +29,18 @@ The plugin needs Python 3.9 or later. It uses only the standard library.
 The first session after you install, or after you change the key, product or URL, runs a check. It shows one message with the result. The check does four things:
 
 - It reads the product, to confirm the key and the product id.
-- It reads the product's auto-close setting.
+- It reads the product's auto-close setting and its policy for turns on a closed session.
 - It reads `showThinkingSummaries` in `~/.claude/settings.json`.
 - It runs a self-test. The self-test sends one synthetic turn to a **development** session, reads it back, and deletes it. It never closes that session, so no monitor evaluates it. If the delete fails, the check fails and the message names the session to delete by hand.
 
-An API key that does not start with `gsk_`, or that holds a space or a line break, is never sent: the session start message says the key is not valid, and nothing is logged to Galtea until you fix it.
+An API key that does not start with `gsk_` or `gsk-`, or that holds a space or a line break, is never sent: the session start message says the key is not valid, and nothing is logged to Galtea until you fix it.
 
-When the check fails, it runs again when you next start or resume a session. It also runs again after Galtea refuses the key (HTTP 401 or 403) on any call, for example when the key was revoked. It does not run on `/clear` or a compaction, so a Galtea host that does not answer never stalls those. It says the key or product id was refused only when Galtea answers 401, 403 or 404. Any other failure is reported as Galtea being unreachable.
+When the check fails, it runs again when you next start or resume a session. It also runs again after Galtea refuses the key (HTTP 401 or 403) on any call, for example when the key was revoked. It does not run on `/clear` or a compaction. The message names one of four failures:
+
+- **Refused:** Galtea answered 401, 403 or 404 when the check read the product.
+- **Error:** Galtea answered with another error status.
+- **Could not reach:** Galtea did not answer. The check then waits 10 minutes before it runs again, so a host that does not answer stalls one session start, not each one.
+- **Self-test failed:** a step after the product read failed.
 
 ## What is sent
 
@@ -43,8 +48,9 @@ One Claude Code session becomes one Galtea session. Its `customId` is the Claude
 
 - **Session metadata:** the working directory, your user name, the plugin version, and the git remote, branch and commit. The git values are left out outside a repository. A remote URL never carries its user name or password.
 - **Session title:** the session name, in metadata as `title`. `title_source` is `custom` for a name you set with `/rename`, which wins, or `ai` for the name Claude Code generated. It is sent after a turn or at session end, only when it changed, and redacted like other text.
-- **Each turn:** your prompt, Claude's final reply, the latency, and the input, output and cache-read token counts.
+- **Each turn:** your prompt, Claude's final reply, the latency, and the input, output and cache-read token counts. The prompt and the reply are each cut at 100 KB.
 - **Traces of each turn:** each model call with its thinking summary, text and tool names; each tool call with its input and output; each subagent with its own steps nested below it. A trace field is cut at 20 KB.
+- When another plugin's Stop hook makes Claude continue a turn, the turn gets the final reply and the traces of the continued work.
 - `claude -p` runs are not logged. Claude Code stops their hooks before the turn can be sent.
 
 The plugin reads the session transcript file to build the traces. Anthropic documents that format as internal. If it changes, the turn is still sent and only the traces and the title are lost.
@@ -55,11 +61,12 @@ Redaction is on by default. It is best-effort: it can miss a secret, so do not r
 
 It masks these values with `[REDACTED]` in prompts, replies, and every trace input, output, error and thinking text:
 
-- API keys with a known prefix: Galtea (`gsk_`), Anthropic, OpenAI, AWS access key ids, GitHub, Slack and Google.
+- API keys with a known prefix: Galtea (`gsk_` and `gsk-`), Anthropic, OpenAI, AWS access key ids, GitHub, Slack and Google.
 - JSON Web Tokens and PEM private key blocks.
 - The value of `Authorization:` and `x-api-key:` headers, and of a bare `Bearer` token.
 - The password in a URL such as `postgres://user:password@host`.
-- The value of a variable or JSON field whose name contains `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY` or `ACCESS_KEY`. The keyword must end a word or a camelCase part, so `clientSecret` counts and `tokenizer` does not. The name stays. Two values are kept: digits only, such as `max_tokens=100000`, and code that names another such variable, such as `password=password` or `max_tokens=max_tokens)`.
+- The value of a secret name in `NAME=value`, in a JSON or Python dict field, or in a line that is only `name: value`, as in YAML. A secret name contains `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY` or `ACCESS_KEY`. The keyword must end a word or a camelCase part, so `clientSecret` counts and `tokenizer` does not. The name stays, and a quoted value is masked up to its closing quote.
+- Kept values: digits only, such as `max_tokens=100000`, and code after `=` that calls a function or reads a variable of the same name, such as `password=get_password(user)` or `api_key=settings.API_KEY`. The `name: value` rule also masks a type in code, such as `password: string`.
 
 If redaction fails on a field, that field is sent as `[REDACTION FAILED]`, never as the raw text. Turn redaction off in the plugin options only if you are sure your sessions hold no secrets.
 
@@ -81,7 +88,9 @@ Claude Code writes thinking text to the transcript only when `showThinkingSummar
 
 `/exit` closes the Galtea session, and Galtea monitors then evaluate it. If you close the terminal instead, the session can stay open. Galtea's auto-close then closes it after the product's inactivity time, 30 minutes by default. Auto-close also closes the session when you exit while the plugin is still sending the last turn: the plugin leaves the session open so that monitors evaluate it with all its traces. The setup check warns you when the product does not auto-close production sessions.
 
-`claude --resume` on a closed session reopens it in Galtea, and monitors evaluate it again. This also works after the plugin's local state for the session is gone: the plugin finds the Galtea session by its `customId` and adds the new turns after the last one.
+`claude --resume` on a closed session reopens it in Galtea, and monitors evaluate it again. This needs the product's closed-session policy to be `REOPEN_AND_REEVALUATE`, the default. With `IGNORE` or `REJECT`, Galtea drops or refuses the new turns, and the setup check warns about it. Resume also works after the plugin's local state for the session is gone: the plugin finds the Galtea session by its `customId` and adds the new turns after the last one.
+
+If you delete the session in Galtea, the next turn of the conversation creates it again, starting from that turn.
 
 ## Windows
 
