@@ -1,6 +1,8 @@
 ---
+name: unmute
 description: Send this repository's Claude Code sessions to Galtea again
-allowed-tools: Bash(sh:*)
+disable-model-invocation: true
+allowed-tools: Bash(sh *scripts/run.sh" unmute *)
 ---
 !`sh "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" unmute "${CLAUDE_PLUGIN_DATA}"`
 
