@@ -71,7 +71,7 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 # --- paths, log, config ----------------------------------------------------
 
 def config_dir():
-    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
 
 
 def data_dir():
