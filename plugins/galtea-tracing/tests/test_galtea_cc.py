@@ -128,7 +128,8 @@ class Base(unittest.TestCase):
 
     def transcript(self, lines):
         path = os.path.join(self.tmp, "t.jsonl")
-        with open(path, "w", encoding="utf-8") as f:
+        # Claude Code writes "\n" on every platform; text mode would write "\r\n" on Windows
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(json.dumps(x) for x in lines) + "\n")
         return path
 
@@ -253,7 +254,7 @@ class TestConfig(Base):
         del os.environ["CLAUDE_PLUGIN_DATA"]
         self.assertEqual(gc.data_dir(), os.path.join(self.tmp, "galtea-tracing"))
         del os.environ["CLAUDE_CONFIG_DIR"]
-        self.assertEqual(gc.data_dir(), os.path.expanduser("~/.claude/galtea-tracing"))
+        self.assertEqual(gc.data_dir(), os.path.join(os.path.expanduser("~"), ".claude", "galtea-tracing"))
 
     def test_an_api_url_without_https_is_refused_except_on_this_machine(self):
         for url, refused in (("http://api.galtea.ai", True), ("http://10.0.0.5:8000", True), ("ftp://h/x", True),
