@@ -5,7 +5,7 @@
     "email": "support@galtea.ai"
   },
   "metadata": {
-    "description": "A preconfigured Galtea skill. Authenticate, manage products, versions, specifications, datasets, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions, traces, and spans through natural conversation.",
+    "description": "Galtea skills for AI coding assistants, and an opt-in Claude Code plugin that sends your Claude Code sessions to Galtea as traces. The skills authenticate, manage products, versions, specifications, datasets, metrics, endpoint-connections, run and monitor evaluations, and inspect sessions, traces, and spans through natural conversation.",
     "version": "1.0.0"
   },
   "plugins": [
@@ -18,7 +18,7 @@
     },
     {
       "name": "galtea-tracing",
-      "description": "Send each Claude Code conversation to Galtea as a production session, with its model calls, tool calls and subagents as traces.",
+      "description": "Send each Claude Code conversation to Galtea as a production session: each turn is a trace, with its model calls, tool calls and subagents as spans.",
       "source": "./plugins/galtea-tracing"
     }
   ]

@@ -1,6 +1,6 @@
 {
   "name": "galtea-tracing",
-  "description": "Send each Claude Code conversation to Galtea as a production session, with its model calls, tool calls and subagents as traces.",
+  "description": "Send each Claude Code conversation to Galtea as a production session: each turn is a trace, with its model calls, tool calls and subagents as spans.",
   "author": {
     "name": "Galtea AI",
     "email": "support@galtea.ai"
