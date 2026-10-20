@@ -1,0 +1,33 @@
+name: galtea-tracing tests
+
+on:
+  pull_request:
+    paths:
+      - "plugins/galtea-tracing/**"
+      - ".github/workflows/galtea-tracing-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/galtea-tracing/**"
+      - ".github/workflows/galtea-tracing-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}, Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the plugin tests
+        run: python -m unittest discover plugins/galtea-tracing/tests -v
