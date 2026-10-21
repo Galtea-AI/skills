@@ -58,6 +58,7 @@ STATE_MAX_AGE = 7 * 24 * 3600
 CREATE_BUDGET = 60  # seconds for the calls that find or create a session
 WAIT = 70  # seconds a hook waits on another hook of its session: longer than CREATE_BUDGET
 CONTINUE_WAIT = 120  # seconds a re-fired Stop waits for the Stop that sent its turn
+MODEL_WAIT, MODEL_READS = 1.5, 7  # seconds, and reads, to find the first answer's model
 UNREACHABLE_RETRY = 600  # seconds before the check runs again against a host that did not answer
 # seconds for the check's steps, then for the self-test cleanup; the SessionStart hook times out at 30
 CHECK_BUDGET = 20
@@ -787,14 +788,64 @@ def set_muted(cwd, muted):
 
 # --- hook handlers ---------------------------------------------------------
 
-def session_body(cfg, custom_id, cwd, production=True):
+def session_body(cfg, custom_id, cwd, production=True, version_id=None):
     meta = {"source": "claude-code", "cwd": cwd, "user": os.environ.get("USER") or os.environ.get("USERNAME"),
             "plugin_version": plugin_version()}
     if cwd and os.path.isdir(cwd):
         meta["user_email"] = git(cwd, "config", "user.email")
     meta.update(git_meta(cwd))
-    return {"customId": custom_id, "isProduction": production, "productId": cfg["product_id"],
-            "metadata": {k: v for k, v in meta.items() if v is not None}}
+    anchor = {"versionId": version_id} if version_id else {"productId": cfg["product_id"]}
+    return dict(anchor, customId=custom_id, isProduction=production,
+                metadata={k: v for k, v in meta.items() if v is not None})
+
+
+def session_model(hook):
+    """The model of the conversation's first answer, which is the main model at session start.
+    The answer can reach the file just after Stop fires, so a transcript without one is read
+    again for up to MODEL_WAIT seconds, as log_spans waits for the turn's last lines."""
+    path = hook.get("transcript_path")
+    if not path:
+        return None
+    for attempt in range(MODEL_READS):
+        if attempt:
+            time.sleep(MODEL_WAIT / (MODEL_READS - 1))
+        model = first_model(path)
+        if model or not os.path.isfile(path):
+            return model
+    return None
+
+
+def first_model(path):
+    try:
+        with open(path, "rb") as f:  # read only up to that answer, not the whole transcript
+            for raw in f:
+                try:
+                    d = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if not isinstance(d, dict) or d.get("type") != "assistant" or d.get("isSidechain"):
+                    continue
+                model = (d.get("message") or {}).get("model")
+                if isinstance(model, str) and model and not model.startswith("<"):  # "<synthetic>": no model call
+                    return model
+    except OSError:
+        pass
+    return None
+
+
+def model_version(cfg, model):
+    """The product's version whose only fact is the model. Galtea links a version it creates
+    to the model of that name, which prices the turns. None on a 4xx, which no retry clears
+    (no get-or-create, a key that cannot create versions): the session then goes to the
+    product's latest version, as before. A 5xx or a timeout raises, so the next turn tries again."""
+    try:
+        return api(cfg, "POST", "/versions/get-or-create",
+                   {"productId": cfg["product_id"], "facts": {"model": model}})["id"]
+    except ApiError as e:
+        if not 400 <= e.status < 500:
+            raise
+        log("no version for model %s (%s); the session goes to the product's latest version" % (model, e))
+        return None
 
 
 def ensure_session(cfg, hook):
@@ -848,7 +899,9 @@ def create_session(cfg, hook):
         log_exc("session lookup failed for %s; it has no earlier turn, so it is created" % key)
         found = []
     if not found:
-        body = session_body(cfg, key, hook.get("cwd"))
+        model = session_model(hook)
+        version_id = model_version(cfg, model) if model else None
+        body = session_body(cfg, key, hook.get("cwd"), version_id=version_id)
         return api(cfg, "POST", "/sessions", body)["id"], 0, body["metadata"]
     sid = max(found, key=lambda x: x.get("createdAt") or "")["id"]
     q = url_part(sid)
