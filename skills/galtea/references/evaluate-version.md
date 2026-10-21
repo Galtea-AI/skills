@@ -72,7 +72,7 @@ Run `galtea evaluations create-from-version --help` for the canonical request sc
 
 ## Why step 4 is needed
 
-`create-from-version` returns `202 Accepted` with a `jobId` because the evaluation jobs are created asynchronously -- one per test case per metric of that test case's own specification (a dataset belongs to one specification, so its rows are never crossed with another specification's metrics). The caller has to list the freshly-created evaluations (status `PENDING`, filtered by `versionId`) to learn their IDs, then poll each one until `status` reaches a terminal state.
+`create-from-version` returns `202 Accepted` with a `jobId` because the evaluation jobs are created asynchronously -- one per test case per metric of the launched specifications its dataset links to (from API 5.11 a dataset can link to several; on 5.10 or older it belongs to one). A specification the launch left out never contributes metrics. The caller has to list the freshly-created evaluations (status `PENDING`, filtered by `versionId`) to learn their IDs, then poll each one until `status` reaches a terminal state.
 
 Terminal states for the poll:
 

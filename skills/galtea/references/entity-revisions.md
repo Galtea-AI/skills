@@ -25,7 +25,7 @@ Nothing else on the platform has revisions. `Product`, `Specification`, `Session
 
 ## There is no revision number
 
-No entity carries a revision counter. Nothing answers "which revision is this" or "how many
+No entity carries a revision counter (a `Version`'s `number` is a product-wide sequence, not one -- see below). Nothing answers "which revision is this" or "how many
 exist in this family". You cannot render `revision 3 of 5`, because neither number exists. Order
 within a family can only be inferred from `createdAt` plus walking the parent links one hop at a
 time. Never invent a revision number in output you show a user.
@@ -103,11 +103,20 @@ from.
 
 ```bash
 # A "revision" is just a new version that names its parent.
-galtea versions create productId: <id>, name: "v2", parentVersionId: <parentId> </dev/null
+galtea versions create productId: <id>, name: "shorter prompt", parentVersionId: <parentId> </dev/null
 ```
 
 The parent stays fully active: it still runs, still evaluates, and still appears in a bare list.
-The parent must belong to the same product or the write is refused.
+The parent must belong to the same product or the write is refused. The parent is set at creation
+only: `PATCH /versions/:id` refuses `parentVersionId`.
+
+Every version also carries a `number` (unique inside its product, labelled `v7`), but that is a
+sequence across the whole product, not a position in a lineage, and deleting a version leaves a
+gap. Names are optional. A custom name stays unique inside the product (a second live version with
+the same name gets `400 A Version with the same Name already exists.`); only the version's own
+`v<number>` label is exempt. A new name shaped like `v` + digits is refused. `versions.get_by_name`
+raises `AmbiguousVersionNameException` in one narrow case: an older version custom-named `v5`
+and the product's fifth version both answer to `v5`.
 
 Python SDK: `versions.create(..., parent_version_id=...)`, `versions.list(parent_version_id=...)`,
 and `parent_version_id` on the returned model. This is the best-covered of the three in the SDK.

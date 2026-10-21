@@ -81,12 +81,12 @@ Verify with `galtea specifications list --product-ids <productId>` / `client.spe
 
 ## Stage 2 — Generate datasets
 
-Goal: for each specification, a `Dataset` whose generated `TestCase`s probe whether the product upholds that spec. Generation is **asynchronous** — poll until the dataset is ready.
+Goal: for each specification, one or more `Dataset`s whose generated `TestCase`s probe whether the product upholds that spec. A specification can hold several datasets (for example a Behavior set plus an uploaded one); from API 5.11 a dataset can also link to several specifications and is scored with the metrics of each launched one it links to (on 5.10 or older it belongs to one). Generation is **asynchronous** — poll until the dataset is ready.
 
 `DatasetType` reads differently per surface: the SDK prefers `ACCURACY` / `SECURITY` / `BEHAVIOR` and also accepts the wire values, while the CLI and raw API take only the wire values `QUALITY` / `RED_TEAMING` / `SCENARIOS`. The `galtea` skill's dataset-types table is the reference. What the loop adds on top is how each type generates and how it wires to a spec — the spine that is easiest to get silently wrong:
 
-- **Behavior** (`BEHAVIOR` in the SDK, `SCENARIOS` on the CLI) generates test cases **directly from the spec**, no extra input — the simplest starting point. Accuracy generation instead needs an uploaded dataset/ground-truth file or a source dataset, and Accuracy/Security require a `dataset_variant`. To upload a file the user already has, rather than generate, the `galtea` skill's `references/custom-dataset-upload.md` holds the CSV columns and the upload path.
-- **`POLICY`** specs take a `dataset_type` at creation. **`POLICY` and `CAPABILITY`** specs can both link a metric (`specifications.link_metrics`) — and a linked metric is what makes an evaluation produce a score; `INABILITY` cannot. **`CAPABILITY`/`INABILITY`** specs omit `dataset_type` and derive their datasets/metrics through the spec-driven flow (`https://docs.galtea.ai/sdk/tutorials/specification-driven-evaluations.md`).
+- **Behavior** (`BEHAVIOR` in the SDK, `SCENARIOS` on the CLI) generates test cases **directly from the spec**, no extra input — the simplest starting point. Accuracy generation **requires** a knowledge-base file (`groundTruthUri` on the wire, `ground_truth_file_path` in the SDK): without one the generator answers `422` and the new dataset is deleted. A source dataset (`sourceTestId`) only builds a Behavior dataset. Accuracy/Security require a `dataset_variant`. To upload a file the user already has, rather than generate, the `galtea` skill's `references/custom-dataset-upload.md` holds the CSV columns and the upload path.
+- **`POLICY`** specs take a `dataset_type` at creation. **`POLICY` and `CAPABILITY`** specs can both link metrics and datasets (`specifications.link_metrics` / `link_datasets`, as many of each as needed) — and a linked metric is what makes an evaluation produce a score; `INABILITY` cannot. **`CAPABILITY`/`INABILITY`** specs omit `dataset_type` and derive their datasets/metrics through the spec-driven flow (`https://docs.galtea.ai/sdk/tutorials/specification-driven-evaluations.md`).
 - **The parameter name split in the rename.** The wire field stays `testType` (and `testVariant`), so the CLI keeps `testType: SCENARIOS`. The SDK parameters are now `dataset_type` and `dataset_variant`; `test_type` and `test_variant` still work as deprecated aliases and emit a warning.
 
 ```bash
@@ -122,7 +122,9 @@ Goal: run the product against the generated test cases and score each one. This 
 def my_agent(messages: list[dict]) -> str:
     return my_product.respond(messages)   # the user's AI product
 
-version = client.versions.create(product_id=product.id, name="v1")   # comparable across iterations
+# Each version gets a number (v1, v2, ...) automatically; a name is optional,
+# and names shaped like `v` + digits are reserved, so describe the change instead.
+version = client.versions.create(product_id=product.id, name="baseline prompt")
 # evaluations.run is the agent-callback entry point: it drives the agent against
 # the spec's datasets (via the conversation simulator for Behavior) and scores each.
 # (Not traces.create_and_evaluate — that logs one pre-computed output.)
@@ -141,16 +143,17 @@ galtea evaluations create-from-version versionId: <versionId> </dev/null
 
 This is the exact flow walked end-to-end in the `galtea` skill's `references/evaluate-version.md` (find product → version → create → list PENDING → poll). Follow it for the async lifecycle.
 
-**Read the outcomes** (either surface): `galtea evaluations list --version-ids <versionId>` / `client.evaluations.list(version_id=...)`, capturing `status`, `score`, and `reason` per evaluation. Evaluations consume credits.
+**Read the outcomes** (either surface): `galtea evaluations list --version-ids <versionId>` / `client.evaluations.list(version_id=...)`, capturing `status`, `passed`, `score`, and `reason` per evaluation. `passed` is the verdict against the metric's own `passThreshold` — use it rather than inventing a cut-off. Each launch is recorded as a `Run`. On the CLI each `create-from-version` call opens its own run (it answers `400` to a `runId`), so one call is already one comparable run. In the SDK, `with client.runs.start(...)` groups everything inside the block, including `evaluations.run` with an agent, and closes the run on exit. A run you open with `galtea runs create` (for `create-from-session` / `create-from-trace` / `create-single-turn` / `sessions create`, which take a `runId`) is never closed automatically: close it with `galtea runs close <id>`. Evaluations consume credits.
 
 ## Stage 4 — Iterate
 
 Goal: turn results into concrete next actions, then loop. This is where the skill earns its keep — don't just dump scores.
 
-1. **Surface what failed, grouped by specification.** For each spec, list its failing test cases with their `score` and the evaluator's `reason`. Make it obvious *which behaviors* are weak, not just an aggregate number. Treat `FAILED`/`SKIPPED` and low-score `SUCCESS` evaluations distinctly (a `SKIPPED` often means a wiring problem, e.g. a `PENDING` dataset or a crashed agent, not a real product failure).
+1. **Surface what failed, grouped by specification.** For each spec, list its failing test cases (`passed: false`) with their `score` and the evaluator's `reason`. Make it obvious *which behaviors* are weak, not just an aggregate number. Treat `FAILED`/`SKIPPED` evaluations and `SUCCESS` evaluations that did not pass distinctly (a `SKIPPED` often means a wiring problem, e.g. a `PENDING` dataset or a crashed agent, not a real product failure).
 2. **Propose concrete changes**, split into two buckets:
    - **Product changes** — specific edits to the agent's prompt, tools, retrieval, or logic that would fix the failing cases. Point at the offending behavior and the reason.
    - **Spec changes** — if a "failure" is actually a mis-stated or missing specification (the spec is wrong, ambiguous, or the product's behavior is acceptable), propose editing the spec instead. Specs are hypotheses too.
+   - **Metric changes** — if the judge itself is wrong (its `reason` contradicts the output), revise the metric (a new revision via `parentMetricId`, then `replay-from-metrics`) or, for a single clear-cut condition, consider a `CLASSIFIER` metric. Don't tune a metric just to make failures disappear.
 3. **Re-run the loop.** After the user applies changes, create a new `Version` (so results are comparable across iterations) and go back to stage 3 — or to stage 1/2 if specs or datasets changed. Report the delta against the previous iteration (which specs improved, which regressed).
 
 Repeat until the failing set is empty or the user is satisfied with the pass rate.
