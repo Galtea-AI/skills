@@ -46,6 +46,10 @@ SAMPLES = {
     "github_pat": ("github_pat_" + "11ABCDEFG_" * 7, "github_pat_11ABC"),
     "slack_token": ("xoxb-1234567890-abcdefghij", "xoxb-1234567890"),
     "google_api_key": ("AIza" + "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q", "AIzaSyA1b2"),
+    "stripe_key": ("key sk_" + "live_" + "Ab12Cd34" * 3, "Ab12Cd34Ab12"),
+    "npm_token": ("token npm_" + "AbCdEf1234" * 3 + "Zz", "AbCdEf1234AbCd"),
+    "huggingface_token": ("token hf_" + "AbCdEf1234" * 3 + "Zz", "AbCdEf1234AbCd"),
+    "gitlab_token": ("token glpat-" + "AbCdEf1234567890xyz", "AbCdEf1234567890"),
     "jwt": ("token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
             "eyJzdWIiOiIxMjM0NTY3ODkwIn0"),
     "auth_header": ('curl -H "Authorization: Basic dXNlcjpwYXNzd29yZA==" x', "dXNlcjpwYXNzd29yZA"),
@@ -386,6 +390,13 @@ class TestApi(Base):
             res = REAL_API(cfg, method, path, body)
         return res, opened
 
+    def test_an_error_body_is_shown_as_text(self):
+        body = '{"message": "Producto no encontrado: café"}'.encode("utf-8")
+        err = urllib.error.HTTPError("https://h/products/p", 404, "Not Found", {}, io.BytesIO(body))
+        with mock.patch.object(gc._OPENER, "open", side_effect=err), self.assertRaises(gc.ApiError) as raised:
+            REAL_API(gc.load_config(), "GET", "/products/p")
+        self.assertEqual(str(raised.exception), 'GET /products/p -> 404 {"message": "Producto no encontrado: café"}')
+
     def test_the_timeout_is_the_time_left_before_the_deadline(self):
         with mock.patch.object(gc.time, "time", lambda: 1000.0):
             _, opened = self.call(deadline=1012.5)
@@ -408,6 +419,8 @@ class TestApi(Base):
         self.assertEqual(req.full_url, "https://h/x/sessions")
         self.assertEqual(req.get_header("Authorization"), "Bearer gsk_test_key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(req.get_header("User-agent"), "galtea-tracing/%s python/%s"
+                         % (gc.plugin_version() or "unknown", gc.platform.python_version()))
         self.assertEqual(req.get_method(), "PATCH")
         self.assertEqual(json.loads(req.data.decode("utf-8")), {"a": "é", "n": 1})
         _, opened = self.call(method="DELETE", path="/sessions/s")
@@ -768,6 +781,19 @@ class TestMute(Base):
         self.assertTrue(gc.is_muted(os.path.join(repo, "b")))
 
     @unittest.skipIf(os.name == "nt", "POSIX file modes")
+    def test_the_log_the_marker_and_a_created_data_dir_are_owner_only(self):
+        self.addCleanup(os.umask, os.umask(0o022))
+        del os.environ["CLAUDE_PLUGIN_DATA"]  # the fallback folder, which the plugin creates itself
+        self.use_api(FakeApi(ok_responses()))
+        gc.hook_main(json.dumps(self.hook("SessionStart", source="startup")))
+        gc.log("first")
+        os.chmod(gc.data_path("hook.log"), 0o644)  # as an older version wrote it
+        gc.log("hello")
+        for path, mode in ((gc.data_dir(), 0o700), (gc.data_path("hook.log"), 0o600), (gc.data_path("checked"), 0o600)):
+            with self.subTest(path=os.path.basename(path)):
+                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), mode)
+
+    @unittest.skipIf(os.name == "nt", "POSIX file modes")
     def test_the_state_file_is_owner_only(self):
         self.addCleanup(os.umask, os.umask(0o022))
         self.run_hook("UserPromptSubmit", prompt="hi")
@@ -982,6 +1008,23 @@ class TestCheck(Base):
         self.start()
         self.assertEqual(fake.paths("GET")[0], "/products/a%2Fb%23c")
 
+    def test_every_id_in_a_path_is_quoted(self):
+        responses = ok_responses()
+        responses[("POST", "/sessions")] = {"id": "s/1 x"}
+        responses[("POST", "/inferenceResults")] = {"id": "ir/1"}
+        fake = self.use_api(FakeApi(responses))
+        lines = [{"type": "user", "promptId": "p1", "message": {"content": "hi"}},
+                 {"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 3},
+                                                   "content": [{"type": "text", "text": "ok"}]}}]
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.run_hook("Stop", last_assistant_message="ok", transcript_path=self.transcript(lines))
+            self.run_hook("SessionEnd", reason="prompt_input_exit")
+        paths = fake.paths()
+        self.assertIn("/sessions/s%2F1%20x/finish", paths)
+        self.assertIn("/inferenceResults/ir%2F1", paths)
+        self.assertEqual([p for p in paths if "s/1" in p or "ir/1" in p], [])
+
     def test_a_product_id_with_a_space_is_refused(self):
         os.environ["CLAUDE_PLUGIN_OPTION_PRODUCT_ID"] = "prod 1"
         fake = self.use_api(FakeApi(ok_responses()))
@@ -1159,7 +1202,11 @@ class TestRedaction(unittest.TestCase):
                      "api_key=settings.API_KEY", "password = get_password(user)", "max_tokens=100000.",
                      # the keyword inside a longer word is not a secret name
                      '{"tokenizer": "cl100k_base"}', "TOKENIZER_PATH=/models/cl100k_base",
-                     "tokenizer: cl100k_base", "max_tokens: 4096", "token: true", "password:"):
+                     "tokenizer: cl100k_base", "max_tokens: 4096", "token: true", "password:",
+                     # key, pass and pwd count only as a later part of a name
+                     "PWD=/home/user/project", "OLDPWD=/home/user", '{"key": "user_settings"}', "keyboard=us-intl",
+                     "bypass=enabled_always", "MONKEY=bananas_and_more", "PASSPORT=ES1234567", "hotkey=ctrl+shift",
+                     "KEY_NAME=my-deploy", "AUTH_PROVIDER=keycloak", "self.cache_key = build_key(item)"):
             with self.subTest(text=text):
                 self.assertEqual(gc.redact(text), text)
         self.assertEqual(gc.redact({"max_tokens": "100000"}), {"max_tokens": "100000"})
@@ -1193,6 +1240,29 @@ class TestRedaction(unittest.TestCase):
                           ('PASSWORD="correct horse battery" next', 'PASSWORD="%s" next' % r),
                           ('PASSWORD="cut off value\nnext', 'PASSWORD="%s\nnext' % r),
                           ("key gsk-0123456789abcdefABCDEF", "key %s" % r)):
+            with self.subTest(text=text):
+                self.assertEqual(gc.redact(text), out)
+
+    def test_the_common_env_file_shapes_are_redacted(self):
+        r = gc.REDACTED
+        for text, out in (("STRIPE_KEY=sk_" + "live_" + "Ab12Cd34" * 3, "STRIPE_KEY=" + r),
+                          ("CREDENTIAL_ENCRYPTION_KEY=9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+                           "CREDENTIAL_ENCRYPTION_KEY=" + r),
+                          ("DB_PASS=hunter2hunter2", "DB_PASS=" + r), ("DB_PWD=hunter2hunter2", "DB_PWD=" + r),
+                          ("export LITELLM_MASTER_KEY=sk-1234567890abcdef", "export LITELLM_MASTER_KEY=" + r),
+                          ('{"api-key": "abcdef1234567890"}', '{"api-key": "%s"}' % r),
+                          ("apiKey: 'abcdef123456'", "apiKey: '%s'" % r),
+                          ("client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVkt", "client-key-data: " + r),
+                          ("DefaultEndpointsProtocol=https;AccountName=x;AccountKey=abcdEFGH1234ijklMNOP5678==;",
+                           "DefaultEndpointsProtocol=https;AccountName=x;AccountKey=%s;" % r),
+                          # an unquoted value runs to the next space, so the mask covers the rest of the string
+                          ("Endpoint=sb://x/;SharedAccessKeyName=k;SharedAccessKey=abcdEFGH1234ijkl=",
+                           "Endpoint=sb://x/;SharedAccessKeyName=" + r),
+                          ("Endpoint=sb://x/;SharedAccessKey=abcdEFGH1234ijkl=",
+                           "Endpoint=sb://x/;SharedAccessKey=" + r),
+                          ("GPG_PASSPHRASE=correcthorse", "GPG_PASSPHRASE=" + r),
+                          ("SMTP_CREDENTIALS=mailer:hunter2pass", "SMTP_CREDENTIALS=" + r),
+                          ("GITHUB_TOKEN=ghp_" + "a1B2c3D4e5" * 4, "GITHUB_TOKEN=" + r)):
             with self.subTest(text=text):
                 self.assertEqual(gc.redact(text), out)
 
@@ -1508,6 +1578,17 @@ class TestTraces(Base):
                 self.assertLessEqual(len(value.encode("utf-8")), limit + 40)
                 self.assertNotIn("\ufffd", value)
 
+    def test_a_turn_full_of_escapes_fits_the_deployed_body_limit(self):
+        # each " takes 2 bytes once escaped, each ESC 6: cut by raw size the body passes 400 KB
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt='"' * 150000)
+            self.run_hook("Stop", last_assistant_message="\x1b[31m" * 30000)
+        body = fake.body("POST", "/inferenceResults")
+        self.assertLessEqual(len(json.dumps(body, ensure_ascii=False).encode("utf-8")), 250 * 1024)
+        self.assertIn("[truncated", body["input"]["user_message"])
+        self.assertIn("[truncated", body["actualOutput"])
+
     def test_a_lone_surrogate_never_loses_the_turn_or_its_spans(self):
         traces = self.send([prompt_line("p1"), tool_call("m1", "t1"), tool_result("t1", "out \ud83d")],
                            prompt="hi \ud83d")
@@ -1696,7 +1777,7 @@ class TestResume(Base):
 
     NEWEST = "/inferenceResults?sessionIds=sess_old&sort=index&sort=desc&limit=1"
 
-    def resume(self, turns, found=None, fail=(), path=None, sortable=True):
+    def resume(self, turns, found=None, fail=(), path=None, sortable=True, prompt_id="p1"):
         """`turns` are the session's stored turns; the server answers the sorted read with the
         one of the highest index, or refuses it when not `sortable`."""
         newest = sorted(turns, key=lambda t: t.get("index", -1), reverse=True)[:1]
@@ -1706,8 +1787,9 @@ class TestResume(Base):
         if not sortable:
             fail = list(fail) + [("GET", self.NEWEST, gc.ApiError("GET", self.NEWEST, 400, b"bad sort"))]
         fake = self.use_api(FakeApi(responses, fail=fail))
-        self.run_hook("UserPromptSubmit", prompt="hi")
-        self.run_hook("Stop", last_assistant_message="ok", **({"transcript_path": path} if path else {}))
+        self.run_hook("UserPromptSubmit", prompt="hi", prompt_id=prompt_id)
+        self.run_hook("Stop", last_assistant_message="ok", prompt_id=prompt_id,
+                      **({"transcript_path": path} if path else {}))
         return fake
 
     def test_resumed_session_is_found_and_continues_its_turns(self):
@@ -1738,10 +1820,16 @@ class TestResume(Base):
     def test_a_failed_lookup_creates_only_a_new_conversation(self):
         prompt = {"type": "user", "promptId": "p1", "message": {"content": "hi"}}
         earlier = {"type": "user", "promptId": "p0", "message": {"content": "before"}}
-        for lines, created in (([prompt], True), ([earlier, prompt], False)):
-            with self.subTest(created=created):
+        queued = {"type": "user", "promptId": "p2", "message": {"content": "next"}}
+        cases = (([prompt], "p1", True), ([earlier, prompt], "p1", False),
+                 ([prompt, queued], "p1", True),  # a prompt queued after this one is not an earlier turn
+                 ([prompt], None, True), ([earlier, prompt], None, False), (None, "p1", False))
+        for n, (lines, pid, created) in enumerate(cases):
+            with self.subTest(case=n, prompt_id=pid, created=created):
                 shutil.rmtree(self.data, True)
-                fake = self.resume([], fail=[("GET", "/sessions")], path=self.transcript(lines))
+                with mock.patch.object(gc.time, "sleep"):
+                    fake = self.resume([], fail=[("GET", "/sessions")], path=lines and self.transcript(lines),
+                                       prompt_id=pid)
                 self.assertEqual("/sessions" in fake.paths("POST"), created)
                 self.assertEqual("/inferenceResults" in fake.paths("POST"), created)
                 with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
@@ -2297,6 +2385,31 @@ class TestConcurrency(Base):
         with open(os.path.join(self.data, "hook.log"), encoding="utf-8") as f:
             self.assertIn("a Stop dropped 1 earlier prompts that got no Stop", f.read())
 
+    def test_without_prompt_ids_a_queued_prompt_with_the_same_text_keeps_its_turn(self):
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="yes", prompt_id=None)
+            self.run_hook("UserPromptSubmit", prompt="yes", prompt_id=None)  # queued
+            self.stop_without_ids(["yes"], "reply one")
+            self.stop_without_ids(["yes", "yes"], "reply two")
+        self.assertEqual(self.sent_turns(fake), [("yes", "reply one", 0), ("yes", "reply two", 1)])
+        self.assertNotIn("has no stored prompt", read_log(self.data))
+
+    def test_without_prompt_ids_the_prompt_is_read_from_the_last_sent_turn(self):
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep"):
+            for n, text in enumerate(("ONE", "TWO")):
+                self.run_hook("UserPromptSubmit", prompt=text, prompt_id=None)
+                self.stop_without_ids(["ONE", "TWO"][:n + 1], "reply %d" % n)
+            self.run_hook("UserPromptSubmit", prompt="THREE", prompt_id=None)
+            with gc.State("s1") as st:
+                start = st["scan_from"]
+            with mock.patch.object(gc, "read_jsonl", wraps=gc.read_jsonl) as read:
+                self.stop_without_ids(["ONE", "TWO", "THREE"], "reply 2")
+        self.assertGreater(start, 0)
+        self.assertEqual(read.call_args_list[0].args[1:], (start,))
+        self.assertEqual(self.sent_turns(fake)[2], ("THREE", "reply 2", 2))
+
     def test_without_prompt_ids_a_refired_stop_leaves_a_queued_prompt(self):
         fake = self.use_api(FakeApi(ok_responses()))
         with mock.patch.object(gc.time, "sleep"):
@@ -2517,6 +2630,21 @@ class TestConcurrency(Base):
         fake = self.use_api(FakeApi(responses))
         self.assertEqual(self.continue_after_a_turn(fake), [["llm:claude"], ["llm:claude", "tool:Bash"]])
         self.assertIn("reply not updated for ir_1", self.hook_log())
+
+    def test_a_refired_stop_with_its_prompt_id_leaves_a_prompt_stored_without_one(self):
+        fake = self.use_api(FakeApi(ok_responses()))
+        first, more = self.continued_turn()
+        path = self.transcript(first)
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="first reply")
+            self.run_hook("UserPromptSubmit", prompt="queued", prompt_id=None)
+            self.transcript(first + more)
+            self.run_hook("Stop", transcript_path=path, last_assistant_message="final reply", stop_hook_active=True)
+        self.assertEqual(self.sent_turns(fake), [("hi", "first reply", 0)])
+        self.assertIn(("PATCH", "/inferenceResults/ir_1", {"actualOutput": "final reply"}), fake.calls)
+        with gc.State("s1") as st:
+            self.assertEqual([p["prompt"] for p in st["prompts"]], ["queued"])
 
     def test_a_refired_stop_before_the_first_stop_sends_the_turn(self):
         fake = self.use_api(FakeApi(ok_responses()))

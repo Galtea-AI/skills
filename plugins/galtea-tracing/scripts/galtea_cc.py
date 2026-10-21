@@ -28,11 +28,12 @@ spans are lost (and the error is logged).
 Config comes from the plugin's install dialog (CLAUDE_PLUGIN_OPTION_API_KEY,
 _PRODUCT_ID, _API_URL, _REDACT_SECRETS). GALTEA_CC_API_URL overrides the host
 for development. GALTEA_CC_DISABLE=1 skips logging for this process. `claude -p`
-runs are not logged.
+runs and one-shot Agent SDK calls are not logged.
 """
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -50,7 +51,8 @@ DEFAULT_API_URL = "https://api.galtea.ai"
 AGENT_TOOLS = ("Agent", "Task")
 SPAN_BATCH = 100
 MAX_SPAN_BYTES = 20000
-# the prompt and the reply each; /inferenceResults takes a JSON body of at most 512 KB
+# the prompt and the reply each, as escaped in the body: the deployed /inferenceResults takes at
+# most 250 KB (EXPRESS_JSON_REQUEST_BODY_MAX_SIZE), and a refused turn is lost
 MAX_TURN_BYTES = 100000
 STATE_MAX_AGE = 7 * 24 * 3600
 CREATE_BUDGET = 60  # seconds for the calls that find or create a session
@@ -92,13 +94,27 @@ def scrub(text):
     return text
 
 
+def make_data_dir(*parts):
+    os.makedirs(data_path(*parts), mode=0o700, exist_ok=True)
+
+
+def open_private(path, append=False):
+    """A text file to write that only its owner can read: it can hold ids and Galtea's error bodies."""
+    # O_BINARY: on Windows a text-mode descriptor would turn the wrapper's "\r\n" into "\r\r\n"
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC) | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags, 0o600)
+    if hasattr(os, "fchmod"):  # the mode above applies only to a new file, not to one an older version wrote
+        os.fchmod(fd, 0o600)
+    return os.fdopen(fd, "a" if append else "w", encoding="utf-8", errors="replace")
+
+
 def log(msg):
     try:
-        os.makedirs(data_dir(), exist_ok=True)
+        make_data_dir()
         path = data_path("hook.log")
         if os.path.isfile(path) and os.path.getsize(path) > LOG_MAX_BYTES:
             os.replace(path, path + ".1")
-        with open(path, "a", encoding="utf-8", errors="replace") as f:
+        with open_private(path, append=True) as f:
             f.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), scrub(msg)))
     except Exception:
         pass
@@ -148,9 +164,15 @@ def plugin_version():
     return version
 
 
+def url_part(value):
+    """An id or value quoted for a URL path segment or a query value."""
+    return urllib.parse.quote(str(value), safe="")
+
+
 class ApiError(RuntimeError):
     def __init__(self, method, path, status, body):
-        super().__init__("%s %s -> %s %s" % (method, path, status, body[:500]))
+        text = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
+        super().__init__("%s %s -> %s %s" % (method, path, status, text[:500]))
         self.status = status
 
 
@@ -180,7 +202,9 @@ def api(cfg, method, path, body=None):
         # surrogate (a JavaScript cut through an emoji) becomes "?" rather than failing the call
         data=json.dumps(body, ensure_ascii=False).encode("utf-8", "replace") if body is not None else None,
         method=method,
-        headers={"Authorization": "Bearer " + cfg["api_key"], "Content-Type": "application/json"},
+        headers={"Authorization": "Bearer " + cfg["api_key"], "Content-Type": "application/json",
+                 "User-Agent": "galtea-tracing/%s python/%s" % (plugin_version() or "unknown",
+                                                                platform.python_version())},
     )
     try:
         with _OPENER.open(req, timeout=timeout) as r:
@@ -242,7 +266,7 @@ class State:
     Hold it only to read and write state, never across an API call."""
 
     def __init__(self, session_id):
-        os.makedirs(data_path("state"), exist_ok=True)
+        make_data_dir("state")
         self.path = data_path("state", re.sub(r"[^\w.-]", "_", session_id) + ".json")
 
     def __enter__(self):
@@ -294,7 +318,10 @@ def prune_state():
 
 # --- redaction -------------------------------------------------------------
 
-_KEYWORD = r"(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)"
+# KEY, PASS and PWD count only after another part of the name (DB_PASS, api-key, AccountKey):
+# a bare key, the shell's PWD and bypass are not secrets.
+_KEYWORD = (r"(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY|CREDENTIAL"
+            r"|(?:(?<=[\w.-][_.-])|(?-i:(?<=[a-z])(?=[A-Z])))(?:KEY|PASS|PWD))")
 # The keyword ends a word or a camelCase part: max_tokens and clientSecret are names, tokenizer is not.
 _NAME = r"[\w.-]{0,64}?" + _KEYWORD + r"(?:s?(?![a-z])|(?-i:(?<=[a-z])(?=[A-Z])))[\w.-]{0,64}?"
 # A value of digits only is a count or a limit (max_tokens=100000), never a secret.
@@ -303,6 +330,8 @@ _NOT_A_NUMBER = r"(?!\d+(?:[\s\"'`,;:.)\]}]|$))"
 _VALUE = r"([^\s\"'`]{5,}[^\s\"'`),;:.\]}])"
 # A quoted value runs to its closing quote, or to the end of the line when the quote is cut off.
 _QUOTED = r"([\"'])" + _NOT_A_NUMBER + r"((?:(?!\3)[^\\\n]|\\.){6,512})(?:\3|(?=\n)|$)"
+# A value an earlier rule masked is left as is: its closing bracket is not part of a new value.
+_NOT_MASKED = r"(?!" + re.escape(REDACTED) + ")"
 _CODE_REF = re.compile(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(\(.*)?")
 
 
@@ -332,13 +361,17 @@ RULES = [
     ("github_pat", re.compile(r"github_pat_[A-Za-z0-9_]{60,}"), REDACTED),
     ("slack_token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"), REDACTED),
     ("google_api_key", re.compile(r"AIza[0-9A-Za-z_-]{35}"), REDACTED),
+    ("stripe_key", re.compile(r"(?<![\w-])[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"), REDACTED),
+    ("npm_token", re.compile(r"(?<![\w-])npm_[A-Za-z0-9]{30,}"), REDACTED),
+    ("huggingface_token", re.compile(r"(?<![\w-])hf_[A-Za-z0-9]{30,}"), REDACTED),
+    ("gitlab_token", re.compile(r"(?<![\w-])glpat-[A-Za-z0-9_-]{16,}"), REDACTED),
     ("jwt", re.compile(r"(?<![\w-])eyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]{8,}"), REDACTED),
     ("auth_header", re.compile(r"(?i)\b(authorization|x-api-key)([\"']?\s*:\s*[\"']?)"
                                r"((?:bearer|basic|token|digest)\s+)?[^\s\"'\\,;]{6,}"), r"\1\2\3" + REDACTED),
     ("bearer", re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"), r"\1" + REDACTED),
     ("url_password", re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]{0,31}://[^\s:/@\"']{1,256}:)[^\s/@\"']{1,256}(@)"),
      r"\1" + REDACTED + r"\2"),
-    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=(?!=)\s*)(?:" + _QUOTED + "|"
+    ("env_assignment", re.compile(r"(?i)(?<![\w.-])(" + _NAME + r")(\s*=(?!=)\s*)" + _NOT_MASKED + "(?:" + _QUOTED + "|"
                                   + _NOT_A_NUMBER + _VALUE + ")"), _assignment),
     # "name": "value" in JSON, 'name': 'value' in a Python dict
     ("json_field", re.compile(r"(?i)(([\"'])" + _NAME + r"\2\s*:\s*([\"']))" + _NOT_A_NUMBER
@@ -449,15 +482,28 @@ def turn_lines(lines, prompt_id):
     return out
 
 
+def body_size(s):
+    """The bytes the string takes in a JSON request body, escapes included, as api() sends it."""
+    return len(json.dumps(s, ensure_ascii=False).encode("utf-8", "replace")) - 2
+
+
 def clip(value, limit):
-    """Keep payloads under the per-span byte budget."""
+    """Keep a field under `limit` bytes of the request body. Escapes count: quotes, backslashes
+    and control characters, such as the ANSI colours of a pasted log, take 2 to 6 bytes each."""
     if value is None:
         return None
     s = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-    b = s.encode("utf-8", "replace")
-    if len(b) <= limit:
+    if body_size(s) <= limit:
         return value
-    return b[:limit].decode(errors="ignore") + "\n…[truncated %d bytes]" % (len(b) - limit)
+    lo, hi = 0, min(len(s), limit)  # the longest prefix that fits; a character takes at least one byte
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if body_size(s[:mid]) <= limit:
+            lo = mid
+        else:
+            hi = mid - 1
+    cut = len(s.encode("utf-8", "replace")) - len(s[:lo].encode("utf-8", "replace"))
+    return s[:lo] + "\n…[truncated %d bytes]" % cut
 
 
 def result_text(content):
@@ -726,7 +772,7 @@ def set_muted(cwd, muted):
     roots = [r for r in current if r != root]
     if muted:
         roots.append(root)
-    os.makedirs(data_dir(), exist_ok=True)
+    make_data_dir()
     # replaced in one step, so a hook reading it never sees half a list
     fd, tmp = tempfile.mkstemp(dir=data_dir(), prefix="muted.", suffix=".tmp")
     try:
@@ -805,7 +851,7 @@ def create_session(cfg, hook):
         body = session_body(cfg, key, hook.get("cwd"))
         return api(cfg, "POST", "/sessions", body)["id"], 0, body["metadata"]
     sid = max(found, key=lambda x: x.get("createdAt") or "")["id"]
-    q = urllib.parse.quote(sid, safe="")
+    q = url_part(sid)
     try:
         newest = items(api(cfg, "GET", "/inferenceResults?sessionIds=%s&sort=index&sort=desc&limit=1" % q))
     except ApiError:  # a platform that cannot sort by index
@@ -831,8 +877,7 @@ def is_first_turn(hook):
 
 
 def find_sessions(cfg, custom_id):
-    q = urllib.parse.quote
-    res = api(cfg, "GET", "/sessions?customIds=%s&productIds=%s" % (q(custom_id), q(cfg["product_id"])))
+    res = api(cfg, "GET", "/sessions?customIds=%s&productIds=%s" % (url_part(custom_id), url_part(cfg["product_id"])))
     return [s for s in items(res) if isinstance(s, dict) and s.get("customId") == custom_id]
 
 
@@ -864,7 +909,7 @@ def post_spans(cfg, hook, ir_id, wait=1.5, sent=(), start=0):
     if totals:
         try:
             # no `tokens`: the API derives it, and has no cache-creation field to add
-            api(cfg, "PATCH", "/inferenceResults/%s" % ir_id, {
+            api(cfg, "PATCH", "/inferenceResults/%s" % url_part(ir_id), {
                 "inputTokens": totals["in"], "outputTokens": totals["out"], "cacheReadInputTokens": totals["cache"],
             })
         except Exception:
@@ -890,9 +935,11 @@ def on_prompt(cfg, hook):
 def take_prompt(st, prompt_id, asked=None, exact=False):
     """Remove and return this Stop's prompt: the one with its prompt_id, else (unless `exact`)
     the oldest prompt stored without an id. A Stop with no prompt_id comes from a Claude Code
-    that sends none: it takes the newest prompt whose text is `asked`, the turn's prompt in the
-    transcript, else the newest prompt. The prompts stored before the one taken got no Stop,
-    as a turn interrupted with Esc gets none, so they are dropped."""
+    that sends none: it takes the oldest prompt whose text is `asked`, the turn's prompt in the
+    transcript, else the newest prompt. The oldest match, since a queued prompt can repeat the
+    text ("yes"); an interrupted prompt of the same text then lends this turn its start time.
+    The prompts stored before the one taken got no Stop, as a turn interrupted with Esc gets
+    none, so they are dropped."""
     prompts = st.get("prompts", [])
     ids = [p.get("prompt_id") for p in prompts]
     if prompt_id is not None:
@@ -901,15 +948,22 @@ def take_prompt(st, prompt_id, asked=None, exact=False):
     if not prompts:
         return None
     match = [j for j, p in enumerate(prompts) if asked is not None and p.get("prompt") == asked]
-    i = match[-1] if match else len(prompts) - 1
+    i = match[0] if match else len(prompts) - 1
     if i:
         log("a Stop dropped %d earlier prompts that got no Stop" % i)
     st["prompts"] = prompts[i + 1:]
     return prompts[i]
 
 
-def last_prompt_text(path):
-    prompts = [d for d in read_jsonl(path) if is_prompt_line(d)] if path else []
+def last_prompt_text(path, start=0):
+    """The text of the transcript's last prompt, read from byte offset `start`, which is at or before it."""
+    if not path:
+        return None
+    if start and os.path.isfile(path) and start > os.path.getsize(path):
+        start = 0
+    prompts = [d for d in read_jsonl(path, start) if is_prompt_line(d)]
+    if not prompts and start:
+        prompts = [d for d in read_jsonl(path) if is_prompt_line(d)]
     return prompt_text(prompts[-1]) if prompts else None
 
 
@@ -922,7 +976,11 @@ def on_stop(cfg, hook):
     # a Stop re-fired by a blocking Stop hook continues its turn. It takes a prompt only by its own
     # id, which is still stored when it runs before the Stop that sends the turn
     refire = bool(hook.get("stop_hook_active"))
-    asked = None if pid or refire else last_prompt_text(hook.get("transcript_path"))
+    asked = None
+    if not pid and not refire:
+        with State(key) as st:
+            start = st.get("scan_from", 0)
+        asked = last_prompt_text(hook.get("transcript_path"), start)
     with State(key) as st:
         pending = None if refire and not pid else take_prompt(st, pid, asked, exact=refire)
         if (pending or refire) and not muted:
@@ -963,7 +1021,7 @@ def drop_empty_session(cfg, key, sid):
             return
         reset_session_state(st)
     try:
-        api(cfg, "DELETE", "/sessions/%s" % sid)
+        api(cfg, "DELETE", "/sessions/%s" % url_part(sid))
     except Exception:
         log_exc("could not delete empty session %s" % sid)
 
@@ -1037,7 +1095,7 @@ def continue_turn(cfg, hook, token):
         return
     hook = dict(hook, prompt_id=pid or last.get("prompt_id"))
     try:
-        api(cfg, "PATCH", "/inferenceResults/%s" % last["ir_id"],
+        api(cfg, "PATCH", "/inferenceResults/%s" % url_part(last["ir_id"]),
             {"actualOutput": clean(cfg, hook.get("last_assistant_message") or "", MAX_TURN_BYTES)})
     except Exception:
         log_exc("reply not updated for %s" % last["ir_id"])
@@ -1088,10 +1146,10 @@ def sync_title(cfg, hook):
         if not sid or last == sent:
             return
         if meta is None:  # the session was found by its customId, so the state holds no copy of its metadata
-            meta = api(cfg, "GET", "/sessions/%s" % sid).get("metadata")
+            meta = api(cfg, "GET", "/sessions/%s" % url_part(sid)).get("metadata")
             meta = meta if isinstance(meta, dict) else {}
         meta = dict(meta, title=sent[0], title_source=sent[1])
-        api(cfg, "PATCH", "/sessions/%s" % sid, {"metadata": meta})
+        api(cfg, "PATCH", "/sessions/%s" % url_part(sid), {"metadata": meta})
         with State(key) as st:
             st["metadata"], st["title_sent"] = meta, sent
     except Exception:
@@ -1117,7 +1175,7 @@ def on_end(cfg, hook):
     if skip:
         return
     try:
-        api(cfg, "PATCH", "/sessions/%s/finish" % sid,
+        api(cfg, "PATCH", "/sessions/%s/finish" % url_part(sid),
             {"stoppingReason": "claude_code:%s" % hook.get("reason", "other")})
     except Exception:
         with State(key) as st:
@@ -1179,7 +1237,6 @@ def self_test(cfg):
     custom_id = "galtea-cc-selftest-%d-%s" % (int(time.time()), uuid.uuid4().hex[:8])
     tpath = os.path.join(tdir, custom_id + ".jsonl")
     sid, create_sent, unreachable = None, False, False
-    q = urllib.parse.quote
     try:
         selftest_transcript(tpath)
         create_sent = True
@@ -1188,8 +1245,8 @@ def self_test(cfg):
                 "last_assistant_message": SELFTEST_REPLY}
         ir = post_turn(cfg, sid, 0, {"prompt": SELFTEST_PROMPT, "ts": time.time()}, hook)
         post_spans(cfg, hook, ir["id"], wait=0)
-        irs = items(api(cfg, "GET", "/inferenceResults?sessionIds=%s" % q(sid, safe="")))
-        traces = items(api(cfg, "GET", "/traces?inferenceResultIds=%s" % q(ir["id"], safe="")))
+        irs = items(api(cfg, "GET", "/inferenceResults?sessionIds=%s" % url_part(sid)))
+        traces = items(api(cfg, "GET", "/traces?inferenceResultIds=%s" % url_part(ir["id"])))
         ok, detail = len(irs) == 1 and len(traces) >= 3, "turns=%d traces=%d" % (len(irs), len(traces))
     except Exception as e:
         log_exc("check: selftest failed")
@@ -1217,7 +1274,7 @@ def delete_selftest_session(cfg, custom_id, sid, create_sent):
     cleaned = True
     for s in sids:
         try:
-            api(cfg, "DELETE", "/sessions/%s" % urllib.parse.quote(s, safe=""))
+            api(cfg, "DELETE", "/sessions/%s" % url_part(s))
         except Exception:
             log_exc("selftest could not delete development session %s" % s)
             cleaned = False
@@ -1229,7 +1286,7 @@ def run_check(cfg, cwd=None):
     start = time.time()
     cfg = dict(cfg, deadline=start + CHECK_BUDGET, cleanup_deadline=start + CHECK_BUDGET + CLEANUP_BUDGET)
     try:
-        product = api(cfg, "GET", "/products/%s" % urllib.parse.quote(cfg["product_id"], safe=""))
+        product = api(cfg, "GET", "/products/%s" % url_part(cfg["product_id"]))
     except Exception as e:
         log_exc("check: product lookup failed")
         if isinstance(e, ApiError) and e.status in (401, 403, 404):
@@ -1294,8 +1351,8 @@ def on_start(cfg, hook):
     ok, message, unreachable = run_check(cfg, hook.get("cwd"))
     if ok or unreachable:
         try:
-            os.makedirs(data_dir(), exist_ok=True)
-            with open(data_path("checked" if ok else "unreachable"), "w", encoding="utf-8") as f:
+            make_data_dir()
+            with open_private(data_path("checked" if ok else "unreachable")) as f:
                 f.write(fp)
         except OSError:  # the user still gets the result
             log_exc("check marker not written")
@@ -1309,8 +1366,10 @@ def hook_main(raw):
     """Run one hook. Returns the dict to print, or None."""
     if os.environ.get("GALTEA_CC_DISABLE") == "1":
         return None
-    # `claude -p` kills async hooks at teardown, so its Stop never posts the turn and
-    # the session would stay empty and open forever. Claude Code sets this in every hook.
+    # `claude -p` exits before its async hooks finish: the Stop that sends the turn never runs,
+    # so the hooks would only store prompts nobody takes. A one-shot Agent SDK query() ends the
+    # same way and stores the same; sdk-py and sdk-ts stay traced, because a long-lived SDK
+    # session runs every hook like an interactive one. Claude Code sets this in every hook.
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
         return None
     hook = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)

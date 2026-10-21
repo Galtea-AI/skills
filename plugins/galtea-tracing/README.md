@@ -60,10 +60,10 @@ One Claude Code session becomes one Galtea session. Its `customId` is the Claude
 
 - **Session metadata:** the working directory, your user name, your git email (`git config user.email`), the plugin version, and the git remote, branch and commit. The git remote, branch and commit are left out outside a repository. A remote URL never carries its user name or password, also in the `user@host:path` form.
 - **Session title:** the session name, in metadata as `title`. `title_source` is `custom` for a name you set with `/rename`, which wins, or `ai` for the name Claude Code generated. It is sent after a turn or at session end, only when it changed, and redacted like other text.
-- **Each turn (a trace):** your prompt, Claude's final reply, the latency from your prompt to the reply, and the input, output and cache-read token counts. The prompt and the reply are each cut at 100 KB.
+- **Each turn (a trace):** your prompt, Claude's final reply, the latency from your prompt to the reply, and the input, output and cache-read token counts. The prompt and the reply are each cut at 100 KB as sent, escapes included, so a turn fits the API's 250 KB request limit.
 - **Spans of each turn:** each model call with its thinking summary, text and tool names; each tool call with its input and output; each subagent with its own steps nested below it. A span field is cut at 20 KB, and the error of a failed tool call at 2 KB.
 - When another plugin's Stop hook makes Claude continue a turn, the turn gets the final reply and the spans of the continued work. A tool call that was still running at the first reply is sent once it ends, with its output. A span is never sent twice.
-- `claude -p` runs are not logged. Claude Code stops their hooks before the turn can be sent.
+- `claude -p` runs and one-shot Agent SDK `query()` calls are not logged. Claude Code stops their hooks before the turn can be sent. A long-lived Agent SDK session (`ClaudeSDKClient` in Python, a streaming prompt in TypeScript) loads the plugin like Claude Code and is logged like an interactive session.
 
 The plugin reads the session transcript file to build the spans. Anthropic documents that format as internal. If it changes, the turn is still sent and only the spans and the title are lost.
 
@@ -73,11 +73,11 @@ Redaction is on by default. It is best-effort: it can miss a secret, so do not r
 
 It masks these values with `[REDACTED]` in prompts, replies, and every span input, output, error and thinking text:
 
-- API keys with a known prefix: Galtea (`gsk_` and `gsk-`), Anthropic, OpenAI, AWS access key ids, GitHub, Slack and Google.
+- API keys with a known prefix: Galtea (`gsk_` and `gsk-`), Anthropic, OpenAI, AWS access key ids, GitHub, Slack, Google, Stripe (`sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`), npm, Hugging Face and GitLab.
 - JSON Web Tokens and PEM private key blocks.
 - The value of `Authorization:` and `x-api-key:` headers, and of a bare `Bearer` token.
 - The password in a URL such as `postgres://user:password@host`.
-- The value of a secret name in `NAME=value`, in a JSON or Python dict field, or in a line that is only `name: value`, as in YAML. A secret name contains `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `PRIVATE_KEY` or `ACCESS_KEY`. The keyword must end a word or a camelCase part, so `clientSecret` counts and `tokenizer` does not. The name stays, and a quoted value is masked up to its closing quote.
+- The value of a secret name in `NAME=value`, in a JSON or Python dict field, or in a line that is only `name: value`, as in YAML. A secret name contains `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIAL`, `API_KEY`, `APIKEY`, `PRIVATE_KEY` or `ACCESS_KEY`, or has `KEY`, `PASS` or `PWD` after another part of the name, as in `DB_PASS`, `api-key` or `AccountKey` in a connection string. A bare `key` or `PWD` is not a secret name. The keyword must end a word or a camelCase part, so `clientSecret` counts and `tokenizer` does not. The name stays, and a quoted value is masked up to its closing quote.
 - Kept values: digits only, such as `max_tokens=100000`, and code after `=` that calls a function or reads a variable of the same name, such as `password=get_password(user)` or `api_key=settings.API_KEY`. The `name: value` rule also masks a type in code, such as `password: string`.
 
 If redaction fails on a field, that field is sent as `[REDACTION FAILED]`, never as the raw text. Turn redaction off in the plugin options only if you are sure your sessions hold no secrets.
@@ -117,6 +117,8 @@ An error in the plugin never makes Claude Code fail. The setup check can delay o
 ```
 ~/.claude/plugins/data/galtea-tracing-galtea/hook.log
 ```
+
+With `CLAUDE_CONFIG_DIR` set, the folder is under it instead of `~/.claude`. On Linux and macOS, only your user can read the files the plugin creates there.
 
 When a turn is sent without its spans, because the transcript or a subagent transcript is missing or holds no line for the turn, `hook.log` says so in one line. The log never holds transcript content. Past 1 MB, it moves to `hook.log.1`, so the two files hold at most about 2 MB.
 
