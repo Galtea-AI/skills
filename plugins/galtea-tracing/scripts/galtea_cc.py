@@ -787,14 +787,49 @@ def set_muted(cwd, muted):
 
 # --- hook handlers ---------------------------------------------------------
 
-def session_body(cfg, custom_id, cwd, production=True):
+def session_body(cfg, custom_id, cwd, production=True, version_id=None):
     meta = {"source": "claude-code", "cwd": cwd, "user": os.environ.get("USER") or os.environ.get("USERNAME"),
             "plugin_version": plugin_version()}
     if cwd and os.path.isdir(cwd):
         meta["user_email"] = git(cwd, "config", "user.email")
     meta.update(git_meta(cwd))
-    return {"customId": custom_id, "isProduction": production, "productId": cfg["product_id"],
-            "metadata": {k: v for k, v in meta.items() if v is not None}}
+    anchor = {"versionId": version_id} if version_id else {"productId": cfg["product_id"]}
+    return dict(anchor, customId=custom_id, isProduction=production,
+                metadata={k: v for k, v in meta.items() if v is not None})
+
+
+def session_model(hook):
+    """The model of the conversation's first answer, which is the main model at session start."""
+    path = hook.get("transcript_path")
+    try:
+        with open(path, "rb") as f:  # read only up to that answer, not the whole transcript
+            for raw in f:
+                try:
+                    d = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if not isinstance(d, dict) or d.get("type") != "assistant" or d.get("isSidechain"):
+                    continue
+                model = (d.get("message") or {}).get("model")
+                if isinstance(model, str) and model and not model.startswith("<"):  # "<synthetic>": no model call
+                    return model
+    except (OSError, TypeError):  # no transcript path, or no file
+        pass
+    return None
+
+
+def model_version(cfg, model):
+    """The product's version whose only fact is the model. Galtea links a version it creates
+    to the model of that name, which prices the turns. None when the platform has no
+    get-or-create: the session then goes to the product's latest version, as before."""
+    try:
+        return api(cfg, "POST", "/versions/get-or-create",
+                   {"productId": cfg["product_id"], "facts": {"model": model}})["id"]
+    except ApiError as e:
+        if e.status not in (404, 405):
+            raise
+        log("this Galtea has no versions/get-or-create; the session goes to the product's latest version")
+        return None
 
 
 def ensure_session(cfg, hook):
@@ -848,7 +883,8 @@ def create_session(cfg, hook):
         log_exc("session lookup failed for %s; it has no earlier turn, so it is created" % key)
         found = []
     if not found:
-        body = session_body(cfg, key, hook.get("cwd"))
+        model = session_model(hook)
+        body = session_body(cfg, key, hook.get("cwd"), version_id=model and model_version(cfg, model))
         return api(cfg, "POST", "/sessions", body)["id"], 0, body["metadata"]
     sid = max(found, key=lambda x: x.get("createdAt") or "")["id"]
     q = url_part(sid)

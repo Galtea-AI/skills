@@ -95,6 +95,7 @@ def ok_responses():
     return {
         ("GET", "/products/"): {"id": "prod_1", "name": "My product", "autoCloseScope": "ALL",
                                 "autoCloseInactivityMinutes": 30},
+        ("POST", "/versions/get-or-create"): {"id": "ver_1"},
         ("POST", "/sessions"): {"id": "sess_1"},
         ("POST", "/inferenceResults"): {"id": "ir_1"},
         ("GET", "/inferenceResults"): [{"id": "ir_1"}],
@@ -548,8 +549,58 @@ class TestTurn(Base):
         fake = self.run_turn(self.turn())
         body = fake.body("POST", "/sessions")
         self.assertTrue(body["isProduction"])
-        self.assertEqual(body["productId"], "prod_1")
         self.assertEqual(fake.body("POST", "/inferenceResults")["index"], 0)
+
+    def model_turn(self, *answers):
+        return self.transcript([{"type": "user", "promptId": "p1", "message": {"content": "hi"}}] + [
+            dict({"type": "assistant", "message": {"id": "m%d" % n, "model": model, "content": []}}, **extra)
+            for n, (model, extra) in enumerate(answers)])
+
+    def turn_with(self, path, fail=()):
+        fake = self.use_api(FakeApi(ok_responses(), fail=fail))
+        with mock.patch.object(gc.time, "sleep"):
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.run_hook("Stop", last_assistant_message="done", **({"transcript_path": path} if path else {}))
+        return fake
+
+    def test_session_goes_to_the_version_of_its_main_model(self):
+        fake = self.turn_with(self.model_turn(("claude-opus-5-5", {}), ("claude-haiku-5-5", {})))
+        self.assertEqual(fake.body("POST", "/versions/get-or-create"),
+                         {"productId": "prod_1", "facts": {"model": "claude-opus-5-5"}})
+        body = fake.body("POST", "/sessions")
+        self.assertEqual(body["versionId"], "ver_1")
+        self.assertNotIn("productId", body)
+
+    def test_the_main_model_skips_subagent_and_synthetic_answers(self):
+        path = self.model_turn(("claude-haiku-5-5", {"isSidechain": True}), ("<synthetic>", {}),
+                               ("claude-sonnet-5-5", {}))
+        fake = self.turn_with(path)
+        self.assertEqual(fake.body("POST", "/versions/get-or-create")["facts"], {"model": "claude-sonnet-5-5"})
+
+    def test_without_a_model_the_session_goes_to_the_latest_version(self):
+        for name, path in (("no transcript", None), ("no answer", self.model_turn()),
+                           ("only synthetic", self.model_turn(("<synthetic>", {})))):
+            with self.subTest(name):
+                shutil.rmtree(self.data, True)
+                fake = self.turn_with(path)
+                self.assertNotIn("/versions/get-or-create", fake.paths("POST"))
+                self.assertEqual(fake.body("POST", "/sessions")["productId"], "prod_1")
+
+    def test_a_galtea_without_get_or_create_uses_the_latest_version(self):
+        missing = gc.ApiError("POST", "/versions/get-or-create", 404, b"Not Found")
+        fake = self.turn_with(self.model_turn(("claude-opus-5-5", {})),
+                              fail=[("POST", "/versions/get-or-create", missing)])
+        self.assertEqual(fake.body("POST", "/sessions")["productId"], "prod_1")
+        self.assertIn("/inferenceResults", fake.paths("POST"))
+        self.assertIn("no versions/get-or-create", self.hook_log())
+
+    def test_a_failed_version_call_sends_no_session(self):
+        # the next turn tries again; a session on another version would carry the wrong prices
+        failed = gc.ApiError("POST", "/versions/get-or-create", 500, b"boom")
+        fake = self.turn_with(self.model_turn(("claude-opus-5-5", {})),
+                              fail=[("POST", "/versions/get-or-create", failed)])
+        self.assertNotIn("/sessions", fake.paths("POST"))
+        self.assertNotIn("/inferenceResults", fake.paths("POST"))
 
     def test_an_interrupted_first_prompt_creates_no_session(self):
         # Esc, then /exit or /clear: the prompt never gets a Stop
@@ -1798,6 +1849,7 @@ class TestResume(Base):
         body = fake.body("POST", "/inferenceResults")
         self.assertEqual((body["sessionId"], body["index"]), ("sess_old", 3))
         self.assertNotIn("/sessions", fake.paths("POST"))
+        self.assertNotIn("/versions/get-or-create", fake.paths("POST"))  # it stays on the version it started on
 
     def test_a_platform_that_cannot_sort_counts_every_turn(self):
         fake = self.resume([{"id": "a", "index": 0}, {"id": "b", "index": 4}], sortable=False)
