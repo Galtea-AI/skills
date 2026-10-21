@@ -81,7 +81,7 @@ Verify with `galtea specifications list --product-ids <productId>` / `client.spe
 
 ## Stage 2 — Generate datasets
 
-Goal: for each specification, one or more `Dataset`s whose generated `TestCase`s probe whether the product upholds that spec. A specification can hold several datasets (for example a Behavior set plus an uploaded one); each dataset belongs to one specification. Generation is **asynchronous** — poll until the dataset is ready.
+Goal: for each specification, one or more `Dataset`s whose generated `TestCase`s probe whether the product upholds that spec. A specification can hold several datasets (for example a Behavior set plus an uploaded one); from API 5.11 a dataset can also link to several specifications and is scored with the metrics of each launched one it links to (on 5.10 or older it belongs to one). Generation is **asynchronous** — poll until the dataset is ready.
 
 `DatasetType` reads differently per surface: the SDK prefers `ACCURACY` / `SECURITY` / `BEHAVIOR` and also accepts the wire values, while the CLI and raw API take only the wire values `QUALITY` / `RED_TEAMING` / `SCENARIOS`. The `galtea` skill's dataset-types table is the reference. What the loop adds on top is how each type generates and how it wires to a spec — the spine that is easiest to get silently wrong:
 
