@@ -586,13 +586,35 @@ class TestTurn(Base):
                 self.assertNotIn("/versions/get-or-create", fake.paths("POST"))
                 self.assertEqual(fake.body("POST", "/sessions")["productId"], "prod_1")
 
-    def test_a_galtea_without_get_or_create_uses_the_latest_version(self):
-        missing = gc.ApiError("POST", "/versions/get-or-create", 404, b"Not Found")
-        fake = self.turn_with(self.model_turn(("claude-opus-5-5", {})),
-                              fail=[("POST", "/versions/get-or-create", missing)])
-        self.assertEqual(fake.body("POST", "/sessions")["productId"], "prod_1")
-        self.assertIn("/inferenceResults", fake.paths("POST"))
-        self.assertIn("no versions/get-or-create", self.hook_log())
+    def test_a_refused_version_call_uses_the_latest_version(self):
+        # no retry clears a 4xx: no get-or-create, a key that cannot create versions, a refused body
+        for status in (400, 403, 404, 405, 422):
+            with self.subTest(status=status):
+                shutil.rmtree(self.data, True)
+                refused = gc.ApiError("POST", "/versions/get-or-create", status, b"refused")
+                fake = self.turn_with(self.model_turn(("claude-opus-5-5", {})),
+                                      fail=[("POST", "/versions/get-or-create", refused)])
+                self.assertEqual(fake.body("POST", "/sessions")["productId"], "prod_1")
+                self.assertIn("/inferenceResults", fake.paths("POST"))
+                self.assertIn("no version for model claude-opus-5-5 (POST /versions/get-or-create -> %d" % status,
+                              self.hook_log())
+
+    def test_an_answer_written_after_stop_still_sets_the_version(self):
+        path = self.model_turn()
+        answer = {"type": "assistant", "message": {"id": "m1", "model": "claude-opus-5-5", "content": []}}
+
+        def late_write(_seconds):
+            with open(path, "a", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps(answer) + "\n")
+            late.side_effect = None
+
+        fake = self.use_api(FakeApi(ok_responses()))
+        with mock.patch.object(gc.time, "sleep") as late:
+            late.side_effect = late_write
+            self.run_hook("UserPromptSubmit", prompt="hi")
+            self.run_hook("Stop", last_assistant_message="done", transcript_path=path)
+        self.assertEqual(fake.body("POST", "/versions/get-or-create")["facts"], {"model": "claude-opus-5-5"})
+        self.assertEqual(fake.body("POST", "/sessions")["versionId"], "ver_1")
 
     def test_a_failed_version_call_sends_no_session(self):
         # the next turn tries again; a session on another version would carry the wrong prices

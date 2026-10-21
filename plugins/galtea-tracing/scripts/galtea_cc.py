@@ -58,6 +58,7 @@ STATE_MAX_AGE = 7 * 24 * 3600
 CREATE_BUDGET = 60  # seconds for the calls that find or create a session
 WAIT = 70  # seconds a hook waits on another hook of its session: longer than CREATE_BUDGET
 CONTINUE_WAIT = 120  # seconds a re-fired Stop waits for the Stop that sent its turn
+MODEL_WAIT, MODEL_READS = 1.5, 7  # seconds, and reads, to find the first answer's model
 UNREACHABLE_RETRY = 600  # seconds before the check runs again against a host that did not answer
 # seconds for the check's steps, then for the self-test cleanup; the SessionStart hook times out at 30
 CHECK_BUDGET = 20
@@ -799,8 +800,22 @@ def session_body(cfg, custom_id, cwd, production=True, version_id=None):
 
 
 def session_model(hook):
-    """The model of the conversation's first answer, which is the main model at session start."""
+    """The model of the conversation's first answer, which is the main model at session start.
+    The answer can reach the file just after Stop fires, so a transcript without one is read
+    again for up to MODEL_WAIT seconds, as log_spans waits for the turn's last lines."""
     path = hook.get("transcript_path")
+    if not path:
+        return None
+    for attempt in range(MODEL_READS):
+        if attempt:
+            time.sleep(MODEL_WAIT / (MODEL_READS - 1))
+        model = first_model(path)
+        if model or not os.path.isfile(path):
+            return model
+    return None
+
+
+def first_model(path):
     try:
         with open(path, "rb") as f:  # read only up to that answer, not the whole transcript
             for raw in f:
@@ -813,22 +828,23 @@ def session_model(hook):
                 model = (d.get("message") or {}).get("model")
                 if isinstance(model, str) and model and not model.startswith("<"):  # "<synthetic>": no model call
                     return model
-    except (OSError, TypeError):  # no transcript path, or no file
+    except OSError:
         pass
     return None
 
 
 def model_version(cfg, model):
     """The product's version whose only fact is the model. Galtea links a version it creates
-    to the model of that name, which prices the turns. None when the platform has no
-    get-or-create: the session then goes to the product's latest version, as before."""
+    to the model of that name, which prices the turns. None on a 4xx, which no retry clears
+    (no get-or-create, a key that cannot create versions): the session then goes to the
+    product's latest version, as before. A 5xx or a timeout raises, so the next turn tries again."""
     try:
         return api(cfg, "POST", "/versions/get-or-create",
                    {"productId": cfg["product_id"], "facts": {"model": model}})["id"]
     except ApiError as e:
-        if e.status not in (404, 405):
+        if not 400 <= e.status < 500:
             raise
-        log("this Galtea has no versions/get-or-create; the session goes to the product's latest version")
+        log("no version for model %s (%s); the session goes to the product's latest version" % (model, e))
         return None
 
 
@@ -884,7 +900,8 @@ def create_session(cfg, hook):
         found = []
     if not found:
         model = session_model(hook)
-        body = session_body(cfg, key, hook.get("cwd"), version_id=model and model_version(cfg, model))
+        version_id = model_version(cfg, model) if model else None
+        body = session_body(cfg, key, hook.get("cwd"), version_id=version_id)
         return api(cfg, "POST", "/sessions", body)["id"], 0, body["metadata"]
     sid = max(found, key=lambda x: x.get("createdAt") or "")["id"]
     q = url_part(sid)
