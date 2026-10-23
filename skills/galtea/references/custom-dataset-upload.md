@@ -322,6 +322,41 @@ deterministic metrics (JSON Field Match, JSON Field Match (Normalized), Text Mat
 Similarity, URL Validation, ROUGE, BLEU, METEOR, IOU, Spatial Match, Tool Correctness) or a
 self-hosted metric. Offer those by name instead of suggesting a custom rubric.
 
+### Field rules in the expected output
+
+In the four JSON Field Match metrics (JSON Field Match, JSON Field Match (Normalized), and their
+Strict variants), a **top-level** value in `expected_output` can be a rule object instead of a
+plain value. Use a rule when the agent's answer is right in more than one spelling. A plain value
+keeps today's comparison. Every other metric reads a rule as raw JSON.
+
+```json
+{
+  "holder": {"$norm": "María José Núñez"},
+  "document_id": {"$regex": "^[A-Z]{2}\\d{7}$", "case_sensitive": false},
+  "total": {"$num": 1250, "tol": 0.5},
+  "issued_on": {"$date": "2024-03-15", "order": "DMY"}
+}
+```
+
+- `$norm`: equal once case, accents, spaces and punctuation are removed. For names and addresses.
+- `$regex`: RE2 `search`, so write `^...$` for a full match. `case_sensitive` defaults to `false`.
+  RE2 has no lookahead, lookbehind or backreference, and `\w` and `\d` are ASCII only: use `\pL`
+  for accented letters.
+- `$num`: a number, a numeric string, or `null`. `tol` is an absolute tolerance, `0` or more.
+- `$date`: an ISO date or `null`. `order` (`DMY`, `MDY` or `any`) says how to read a numeric date
+  such as `01/02/1980` in the agent's answer; it defaults to `DMY`.
+- With `$num` or `$date` set to `null`, the test passes when the answer holds no number or no date.
+
+**The rule lives inside the expected output string, so escape twice.** In JSON, write each
+backslash twice (`\\d`, not `\d`). In a CSV cell, also double every quote, so
+`{"a": {"$regex": "\\d"}}` becomes `"{""a"": {""$regex"": ""\\d""}}"`. A single backslash is
+invalid JSON.
+
+**A mistake in the expected output ends the evaluation `SKIPPED`, not `FAILED`:** invalid JSON,
+an unknown rule or option, an invalid rule value, or a rule inside a nested object or list. The
+reason names the field. Fix the test case and rerun. Docs:
+https://docs.galtea.ai/concepts/metric/json-field-match
+
 ## Running your agent on a file-carrying test case
 
 Three runners deliver the file. Pick by where the user's product runs:
