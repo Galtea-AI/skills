@@ -318,16 +318,23 @@ attribute, so a script cannot tell a file skip from any other skip. Read the row
 metric whose `evaluationParams` omits `input` or `actual_output` (`"evaluationParams" must
 include "input" — the evaluator always provides these to the judge.`), so every custom judge
 reads the input and every custom judge is therefore skipped on a file-carrying input. Output-only scoring means the platform's built-in
-deterministic metrics (JSON Field Match, JSON Field Match (Normalized), Text Match, Text
+deterministic metrics (JSON Field Match, JSON Field Match (Normalized), JSON Field Match (Strict),
+JSON Field Match (Normalized, Strict), Text Match, Text
 Similarity, URL Validation, ROUGE, BLEU, METEOR, IOU, Spatial Match, Tool Correctness) or a
 self-hosted metric. Offer those by name instead of suggesting a custom rubric.
 
 ### Field rules in the expected output
 
-In the four JSON Field Match metrics (JSON Field Match, JSON Field Match (Normalized), and their
-Strict variants), a **top-level** value in `expected_output` can be a rule object instead of a
-plain value. Use a rule when the agent's answer is right in more than one spelling. A plain value
-keeps today's comparison. Every other metric reads a rule as raw JSON.
+In the four JSON Field Match metrics (JSON Field Match, JSON Field Match (Normalized), JSON Field
+Match (Strict) and JSON Field Match (Normalized, Strict)), a **top-level** value in
+`expected_output` can be a rule object instead of a plain value. Use a rule when the agent's answer
+is right in more than one spelling. A plain value is compared exactly as before. Every other metric
+reads a rule as raw JSON.
+
+**Field rules are newer than the 5.3.0 release named above.** A deployment without them compares
+the rule object as a plain value, so every rule field fails. On a deployment you have not checked,
+score one test case first: expected `{"a": {"$norm": "X"}}` against the answer `{"a": "x"}` gives
+1.0 only where rules are supported.
 
 ```json
 {
@@ -339,18 +346,23 @@ keeps today's comparison. Every other metric reads a rule as raw JSON.
 ```
 
 - `$norm`: equal once case, accents, spaces and punctuation are removed. For names and addresses.
+  JSON Field Match (Normalized) already ignores case and accents; `$norm` also ignores spaces and
+  punctuation.
 - `$regex`: RE2 `search`, so write `^...$` for a full match. `case_sensitive` defaults to `false`.
-  RE2 has no lookahead, lookbehind or backreference, and `\w` and `\d` are ASCII only: use `\pL`
-  for accented letters.
+  RE2 has no lookahead, lookbehind or backreference, and `\\w` and `\\d` are ASCII only: use
+  `\\pL` for accented letters. These are written as they appear in the JSON (see below).
 - `$num`: a number, a numeric string, or `null`. `tol` is an absolute tolerance, `0` or more.
 - `$date`: an ISO date or `null`. `order` (`DMY`, `MDY` or `any`) says how to read a numeric date
   such as `01/02/1980` in the agent's answer; it defaults to `DMY`.
 - With `$num` or `$date` set to `null`, the test passes when the answer holds no number or no date.
 
-**The rule lives inside the expected output string, so escape twice.** In JSON, write each
-backslash twice (`\\d`, not `\d`). In a CSV cell, also double every quote, so
-`{"a": {"$regex": "\\d"}}` becomes `"{""a"": {""$regex"": ""\\d""}}"`. A single backslash is
-invalid JSON.
+**The expected output is JSON, so a regex backslash is written twice:** `\\d`, not `\d`. In a
+CSV cell, also double every quote, so `{"a": {"$regex": "\\d"}}` becomes
+`"{""a"": {""$regex"": ""\\d""}}"`. When `expected_output` is itself a string field inside a JSON
+request body (the CLI `echo '{...}' | galtea ...` pattern, or a raw API call), escape once more:
+`\\\\d`. A single `\d`, `\w`, `\s` or `\p` is invalid JSON and ends `SKIPPED`. A single `\b` is
+valid JSON but becomes a backspace instead of a word boundary; the metric refuses it and also ends
+`SKIPPED`.
 
 **A mistake in the expected output ends the evaluation `SKIPPED`, not `FAILED`:** invalid JSON,
 an unknown rule or option, an invalid rule value, or a rule inside a nested object or list. The
