@@ -1,0 +1,22 @@
+id: spec-driven-setup
+# The reported case: does the agent let the platform generate the datasets and
+# metrics, or write test content by hand?
+workspace: bank-chatbot
+prompt: |
+  I have a customer support chatbot for a Spanish bank. It should answer
+  questions about accounts and cards, refuse to give investment advice,
+  and never reveal another customer's data. Set it up in Galtea: create
+  the product, write the specifications, and generate datasets and metrics
+  from them. Tell me the IDs when you're done.
+expect:
+  product: true
+  specifications:
+    count: ">=3"
+    each: {type: {in: [CAPABILITY, INABILITY, POLICY]}}
+  datasets:
+    count: ">=1"
+    each: {status: SUCCESS, generated: true}
+  metrics:
+    count: ">=1"
+  links:
+    every_specification_has_metrics: true

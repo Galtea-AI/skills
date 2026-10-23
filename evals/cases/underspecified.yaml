@@ -1,0 +1,12 @@
+id: underspecified
+# Does the skill ask, or invent the product's behaviours? Creating an empty
+# product is fine; inventing specifications or test data is not. Whether it asked
+# is read from the transcript, not asserted: a question can come as a numbered
+# list with no "?".
+prompt: |
+  Set up testing for my chatbot in Galtea.
+expect:
+  specifications:
+    count: 0
+  datasets:
+    count: 0
