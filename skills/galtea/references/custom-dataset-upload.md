@@ -277,37 +277,36 @@ slip a type past the list.
 over three files, is refused. The same uri listed twice counts once toward the size and twice
 toward the count.
 
-## Metrics skip on an input they cannot read
+## Metrics skip on a file their judge does not read
 
-A judge cannot read an uploaded file. The judge is sent the session's **turns** with every file
-part stripped out, never the test case input, so the turns decide what is skipped:
+A metric scores a file only when its judge model reads that kind of file. A judge is sent PNG, JPEG,
+WebP, GIF and PDF only; the other accepted types are stored and delivered to the endpoint, but no
+judge reads them. Before an evaluation runs, the API checks every file on each side the metric
+reads (`conversation_turns` reads both sides of every turn):
 
-- **A metric that declares `input` is skipped** when no turn in the session carries readable
-  text, with the reason `Evaluators cannot read input files yet.` A turn is readable when it
-  yields text and carries **no** file part. Text sent beside the document does not count: it is
-  usually a prompt about the document, so scoring it would give a confident number about a file
-  the judge never read. A file test case runs as a single turn, so a platform run or an
-  `evaluations.run` over one **always** skips those metrics. A skip costs no credits.
-- **A metric that declares `conversation_turns` is never skipped** for a file. The turns are
-  scored as logged, blank first message included.
-- **One readable turn is enough.** An attachment on one turn of a long monitored session leaves
-  the rest of the session scorable.
+- **One file the judge would not read skips the metric**, whatever text sits beside it. The reason
+  names the file, its turn and what refused it: the judge model cannot read that kind, the model
+  catalog does not say, the metric names no judge model, the metric is DeepEval-based, deterministic
+  or a classifier metric (text only), the file is a type no judge reads, or the audio has no
+  transcript. A skip costs no credits.
+- **Human evaluation and self-hosted metrics are never skipped** for a file.
+- **A deployment may not send files to the judge at all.** There the evaluator also skips the
+  metrics the API let through, and the reason names the file. Do not promise a score on an image or
+  PDF before a test evaluation on the user's deployment returns one.
 
-Two ways to get a score on a document, and say them before the user builds the dataset:
+Three ways to get a score on a document, and say them before the user builds the dataset:
 
-1. **Log the extracted text as the turn input, without the file part.** In the manual loop below,
+1. **Pick a metric whose judge model reads that kind of file**, for an image or a PDF.
+2. **Log the extracted text as the turn input, without the file part.** In the manual loop below,
    pass your pipeline's extracted text as `input=` to `traces.create_and_evaluate`, and the
    `input` metrics score that text. `evaluations.run()` cannot override the input at all: it
-   writes the file envelope as the turn input, so it keeps skipping those metrics for a document
-   row.
-2. **Score only the output**, with a built-in deterministic metric such as the JSON Field Match
+   writes the file envelope as the turn input, so it scores the turn as logged, file included.
+3. **Score only the output**, with a built-in deterministic metric such as the JSON Field Match
    family. On Galtea Cloud since release 5.2.0, a JSON metric on an output that is not valid JSON
-   is `SKIPPED`, not `FAILED`, so a pipeline that answered prose does not read as a wrong answer. Self-hosted
-   metrics, where the user computes the score, are never skipped.
+   is `SKIPPED`, not `FAILED`, so a pipeline that answered prose does not read as a wrong answer.
 
 The dashboard's Run Evaluation dialog greys out every metric the run would skip and shows the
-reason under its name, and a scored evaluation whose judged turns carried a file warns that the
-attachment was not sent to the judge.
+reason under its name.
 
 **The skip reason is in the evaluation's `error` field, which the SDK does not expose.** A
 `SKIPPED` evaluation read through `galtea.evaluations.get` has `reason=None` and no `error`
@@ -317,7 +316,7 @@ attribute, so a script cannot tell a file skip from any other skip. Read the row
 **The user cannot write their own output-only judge.** `POST /metrics` refuses an AI-evaluated
 metric whose `evaluationParams` omits `input` or `actual_output` (`"evaluationParams" must
 include "input" — the evaluator always provides these to the judge.`), so every custom judge
-reads the input and every custom judge is therefore skipped on a file-carrying input. Output-only scoring means the platform's built-in
+reads the input and every custom judge is therefore skipped on a file-carrying input unless its judge model reads that file. Output-only scoring means the platform's built-in
 deterministic metrics (JSON Field Match, JSON Field Match (Normalized), JSON Field Match (Strict),
 JSON Field Match (Normalized, Strict), Text Match, Text
 Similarity, URL Validation, ROUGE, BLEU, METEOR, IOU, Spatial Match, Tool Correctness) or a
@@ -557,8 +556,8 @@ curl -sL -o rental-contract.pdf "<downloadPresignedUrl>"
   `Test case <id> attaches files to its input, which the platform supports for single-turn runs
   only. Remove the files, or run this test case as a single turn.` That covers a `BEHAVIOR`
   scenario and `simulator.simulate(max_turns>1)`; neither leaves a turn behind.
-- **The judge never sees the file.** Vision judging is deferred. The `input` metrics skip unless a
-  turn carries file-free text, as "Metrics skip on an input they cannot read" says.
+- **A judge sees the file only when its model reads that kind**, as "Metrics skip on a file their
+  judge does not read" says.
 - **Augment is refused** for a dataset whose test cases carry file or audio parts, with a `400`
   before any credit is reserved; the dashboard disables the button with the same sentence. Extend
   has no media guard, but it re-runs the dataset's original generator, so a dataset built from an
