@@ -1,0 +1,14 @@
+id: product-version-connection
+# Wiring an HTTP product: the galtea-loop skill defers this to the galtea skill,
+# which names no endpoint-connection command. Creation only; nothing calls the URL.
+prompt: |
+  My support chatbot is an HTTP API. POST https://example.com/chat with a
+  JSON body {"message": "<user text>"} returns {"reply": "<bot text>"}.
+  Register it in Galtea: create the product, a version called v1, and connect
+  that version to the endpoint so Galtea can call it. Tell me the IDs.
+expect:
+  product: true
+  versions:
+    count: 1
+  endpoint_connections:
+    count: 1
