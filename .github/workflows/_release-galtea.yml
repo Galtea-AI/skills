@@ -1,0 +1,43 @@
+name: "🚀 Release | Release the galtea skill (reusable)"
+
+# Building block called by merge-main.yml. If the pushed commits add a
+# changelog entry, it tags the pushed commit `galtea--v<version>` and creates
+# the GitHub release with the entry as its notes. The entry's first line picks
+# major or patch, and the version follows the last `galtea--v*` tag. Releases
+# nothing when no entry was added, and nothing again for a commit already
+# tagged. Always runs when called.
+on:
+  workflow_call:
+    inputs:
+      before_sha:
+        description: "The commit main pointed at before the push"
+        required: true
+        type: string
+      sha:
+        description: "The pushed commit to tag"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Tag and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # creates the tag and the release
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ inputs.before_sha }}
+          SHA: ${{ inputs.sha }}
+        run: .github/scripts/release-galtea/release-galtea.sh "$BEFORE_SHA" "$SHA"

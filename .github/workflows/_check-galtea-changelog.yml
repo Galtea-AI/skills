@@ -1,0 +1,37 @@
+name: "📝 Changelog | Check the galtea skill entry (reusable)"
+
+# Building block called by pull-request-validation.yml. A pull request that
+# changes skills/galtea/ adds exactly one changelog entry, and every added
+# entry is well formed (CONTRIBUTING.md). Its merge then releases the skill
+# through _release-galtea.yml. Always runs when called.
+on:
+  workflow_call:
+    inputs:
+      base_sha:
+        description: "The pull request's base commit"
+        required: true
+        type: string
+      head_sha:
+        description: "The pull request's head commit"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Changelog entry
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the entry
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        run: .github/scripts/check-galtea-changelog/check-galtea-changelog.sh "$BASE_SHA" "$HEAD_SHA"

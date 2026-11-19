@@ -1,0 +1,27 @@
+name: 🔀 Merge to main
+
+# The entry for every push to main. A merge that adds a changelog entry is a
+# release of the galtea skill: the pull request was the gate, reviewed and with
+# its entry checked by pull-request-validation.yml. A merge with no new entry
+# releases nothing. The work lives in `_` blocks.
+on:
+  push:
+    branches: [main]
+
+# One run at a time, so a second merge reads the tag the first one created.
+concurrency:
+  group: merge-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: 🚀 Release the galtea skill
+    permissions:
+      contents: write # passed to the block, which creates the tag and the release
+    uses: ./.github/workflows/_release-galtea.yml
+    with:
+      before_sha: ${{ github.event.before }}
+      sha: ${{ github.sha }}

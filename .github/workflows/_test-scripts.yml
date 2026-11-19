@@ -1,0 +1,28 @@
+name: "🧪 Test .github/scripts (reusable)"
+
+# Building block called by pull-request-validation.yml. Each script the
+# workflows call lives in its own folder under .github/scripts/ with a
+# unittest test beside it. Runs them on the oldest Python a developer may
+# have (macOS ships 3.9). Always runs when called.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Script tests
+    runs-on: ubuntu-24.04 # the newest image with a Python 3.9 build
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.9"
+
+      - name: Run .github/scripts tests
+        run: python .github/scripts/run_tests.py

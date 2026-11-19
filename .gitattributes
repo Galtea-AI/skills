@@ -1,0 +1,2 @@
+# Shell scripts run under bash, which fails on CRLF line ends from a Windows checkout.
+*.sh text eol=lf
