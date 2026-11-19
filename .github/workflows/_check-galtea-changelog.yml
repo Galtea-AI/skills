@@ -34,4 +34,4 @@ jobs:
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           HEAD_SHA: ${{ inputs.head_sha }}
-        run: .github/scripts/check-galtea-changelog.sh "$BASE_SHA" "$HEAD_SHA"
+        run: .github/scripts/check-galtea-changelog/check-galtea-changelog.sh "$BASE_SHA" "$HEAD_SHA"

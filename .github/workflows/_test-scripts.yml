@@ -1,8 +1,9 @@
 name: "🧪 Test .github/scripts (reusable)"
 
-# Building block called by pull-request-validation.yml. Runs every
-# `tests/test-<script>.sh` beside the scripts the workflows call. Always runs
-# when called.
+# Building block called by pull-request-validation.yml. Each script the
+# workflows call lives in its own folder under .github/scripts/ with a
+# unittest test beside it. Runs them on the oldest Python a developer may
+# have (macOS ships 3.9). Always runs when called.
 on:
   workflow_call:
 
@@ -19,11 +20,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.9"
+
       - name: Run .github/scripts tests
-        run: |
-          status=0
-          for test in .github/scripts/tests/test-*.sh; do
-            echo "== $test"
-            bash "$test" || status=1
-          done
-          exit "$status"
+        run: python .github/scripts/run_tests.py

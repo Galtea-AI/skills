@@ -40,4 +40,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BEFORE_SHA: ${{ inputs.before_sha }}
           SHA: ${{ inputs.sha }}
-        run: .github/scripts/release-galtea.sh "$BEFORE_SHA" "$SHA"
+        run: .github/scripts/release-galtea/release-galtea.sh "$BEFORE_SHA" "$SHA"
