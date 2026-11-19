@@ -6,7 +6,7 @@ A line stays in the skill only if no platform release can make it false. A fact 
 
 ## Every merge is a release
 
-Each pull request that changes `skills/galtea/` adds one changelog entry. When it merges, a workflow tags the merge commit `galtea--v<version>` and creates the GitHub release with the entry as its notes. Only the latest version is supported. A pull request that does not change the skill adds no entry and releases nothing.
+Each pull request that changes `skills/` adds one changelog entry: every skill there ships in the `galtea` plugin. When it merges, a workflow tags the merge commit `galtea--v<version>` and creates the GitHub release with the entry as its notes. If merges land close together, one release can hold several entries; it is major if any of them is. Only the latest version is supported. A pull request that does not change `skills/` adds no entry and releases nothing.
 
 ## Changelog entries
 
@@ -25,4 +25,4 @@ The agent reads the docs of the deployment it is logged in to before it acts.
 - **Line 2** is empty.
 - **From line 3,** say what changes for the user's agent, in plain sentences.
 
-The **📝 Changelog** check refuses a pull request that changes the skill with no entry, adds more than one, or adds a malformed one. Never edit a released entry: its text is already the release notes.
+The **📝 Changelog** check refuses a pull request that changes `skills/` with no entry, adds more than one, adds a malformed one, or edits, renames or deletes a released one: its text is already the release notes.

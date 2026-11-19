@@ -38,6 +38,10 @@ CASES = [
         {**SKILL_CHANGE, "changelog/20261119-1030-empty.md": "patch\n\n\n"},
         1, "says nothing from line 3 on",
     ),
+    (
+        "a change to another skill of the plugin without an entry fails",
+        {"skills/galtea-loop/SKILL.md": "loop\n"}, 1, "changes skills/ but adds no changelog entry",
+    ),
     ("a change outside the skill with no entry passes", {"README.md": "readme\nmore\n"}, 0, "releases nothing"),
     (
         "an entry with no skill change passes",
@@ -45,6 +49,9 @@ CASES = [
         0, "valid major entry",
     ),
 ]
+
+
+RELEASED_ENTRY = "changelog/20261101-0900-released.md"
 
 
 class CheckGalteaChangelogTest(ScriptTestCase):
@@ -59,3 +66,23 @@ class CheckGalteaChangelogTest(ScriptTestCase):
 
                 self.assertEqual(result.returncode, exit_code, result.stdout)
                 self.assertIn(needle, result.stdout)
+
+    def test_an_edited_released_entry_fails(self):
+        repo = self.new_repo()
+        base = repo.commit({RELEASED_ENTRY: "patch\n\nOld.\n"})
+        head = repo.commit({RELEASED_ENTRY: "patch\n\nRewritten.\n"})
+
+        result = run_script(SCRIPT, base, head, cwd=repo.path)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("edits, renames or deletes a released entry: " + RELEASED_ENTRY, result.stdout)
+
+    def test_a_base_git_cannot_read_fails(self):
+        repo = self.new_repo()
+        repo.commit({"README.md": "readme\n"})
+        head = repo.commit({"README.md": "readme\nmore\n"})
+
+        result = run_script(SCRIPT, "deadbeef", head, cwd=repo.path)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Cannot compare deadbeef...", result.stdout)

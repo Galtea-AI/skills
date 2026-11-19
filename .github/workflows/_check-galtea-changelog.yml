@@ -1,9 +1,9 @@
 name: "📝 Changelog | Check the galtea skill entry (reusable)"
 
 # Building block called by pull-request-validation.yml. A pull request that
-# changes skills/galtea/ adds exactly one changelog entry, and every added
-# entry is well formed (CONTRIBUTING.md). Its merge then releases the skill
-# through _release-galtea.yml. Always runs when called.
+# changes skills/ adds exactly one changelog entry, every added entry is well
+# formed, and no released entry changes (CONTRIBUTING.md). Its merge then
+# releases the skill through _release-galtea.yml. Always runs when called.
 on:
   workflow_call:
     inputs:

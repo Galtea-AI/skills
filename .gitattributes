@@ -1,2 +1,4 @@
 # Shell scripts run under bash, which fails on CRLF line ends from a Windows checkout.
 *.sh text eol=lf
+# The checks read a changelog entry line by line; a CRLF entry would fail on an invisible \r.
+changelog/*.md text eol=lf

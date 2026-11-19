@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks the changelog entry of a pull request. A pull request that changes
-# skills/galtea/ adds exactly one entry; any added entry must be well formed.
-# Merging the entry releases the skill (release-galtea.sh).
+# skills/ adds exactly one entry; any added entry must be well formed, and no
+# released entry changes. Merging the entry releases the skill (release-galtea.sh).
 #
 # An entry is `changelog/<YYYYMMDD>-<HHMM>-<short-name>.md`:
 #   line 1: major or patch (see CONTRIBUTING.md)
@@ -15,12 +15,24 @@ BASE="${1:?usage: check-galtea-changelog.sh <base sha> <head sha>}"
 HEAD="${2:?usage: check-galtea-changelog.sh <base sha> <head sha>}"
 GUIDE="See 'Changelog entries' in CONTRIBUTING.md."
 
-added=$(git diff --name-only --diff-filter=A "$BASE...$HEAD" -- changelog/)
-skill_changes=$(git diff --name-only "$BASE...$HEAD" -- skills/galtea/)
+# changed <diff filter> <path>: the files of the pull request under <path>.
+changed() {
+  if ! git diff --name-only --diff-filter="$1" "$BASE...$HEAD" -- "$2"; then
+    echo "::error::Cannot compare $BASE...$HEAD, so the entry cannot be checked." >&2
+    exit 1
+  fi
+}
+added=$(changed A changelog/) || exit 1
+edited=$(changed MDR changelog/) || exit 1
+skill_changes=$(changed ACDMRT skills/) || exit 1
 count=$(printf '%s' "$added" | grep -c . || true)
 
+if [ -n "$edited" ]; then
+  echo "::error::This pull request edits, renames or deletes a released entry: ${edited//$'\n'/, }. Its text is already the release notes; add a new entry instead. $GUIDE"
+  exit 1
+fi
 if [ -n "$skill_changes" ] && [ "$count" -eq 0 ]; then
-  echo "::error::This pull request changes skills/galtea/ but adds no changelog entry. Add one file under changelog/. $GUIDE"
+  echo "::error::This pull request changes skills/ but adds no changelog entry. Add one file under changelog/. $GUIDE"
   exit 1
 fi
 if [ "$count" -gt 1 ]; then
