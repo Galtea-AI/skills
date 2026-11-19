@@ -1,0 +1,21 @@
+name: Pull Request Validation
+
+# The entry for every pull request. No paths filter, so each check reports on
+# every pull request and can be made required. The work lives in `_` blocks.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: 📝 Changelog
+    uses: ./.github/workflows/_check-galtea-changelog.yml
+    with:
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+
+  script-tests:
+    name: 🧪 Test .github/scripts
+    uses: ./.github/workflows/_test-scripts.yml

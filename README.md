@@ -69,6 +69,13 @@ git clone https://github.com/Galtea-AI/skills.git /path/to/galtea-skills
 ln -s /path/to/galtea-skills/skills/galtea /path/to/skills-directory/galtea
 ```
 
+### Versions
+
+Every change to the `galtea` skill is a release, with a tag `galtea--v<version>` and a [GitHub release](https://github.com/Galtea-AI/skills/releases) that says what changed. Only the latest version is supported. Each install follows the latest release; you choose when to update.
+
+- **Update:** run `claude plugin update galtea@galtea`, `npx skills update` or `git pull`, depending on how you installed it.
+- **Stay on one release, or go back to one:** in Claude Code, add the marketplace at its tag, for example `/plugin marketplace add Galtea-AI/skills#galtea--v1.0.0`. This pins every plugin of the marketplace. For a manual install, `git clone --branch galtea--v1.0.0 https://github.com/Galtea-AI/skills.git`.
+
 ## Prerequisites
 
 The skills need a Galtea account and an API key:

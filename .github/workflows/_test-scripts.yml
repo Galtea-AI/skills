@@ -1,0 +1,29 @@
+name: "🧪 Test .github/scripts (reusable)"
+
+# Building block called by pull-request-validation.yml. Runs every
+# `tests/test-<script>.sh` beside the scripts the workflows call. Always runs
+# when called.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run .github/scripts tests
+        run: |
+          status=0
+          for test in .github/scripts/tests/test-*.sh; do
+            echo "== $test"
+            bash "$test" || status=1
+          done
+          exit "$status"

@@ -21,6 +21,13 @@ Each skill is a directory containing `SKILL.md`. Start reading from there — th
 
 See [README.md](./README.md) for installation and prerequisites.
 
+## Contributing
+
+Before you change `skills/galtea/`, read [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+- A line stays in the skill only if no platform release can make it false.
+- A pull request that changes `skills/galtea/` adds exactly one entry, `changelog/<YYYYMMDD>-<HHMM>-<short-name>.md`: line 1 `major` or `patch`, line 2 empty, then what changes for the user's agent. Its merge releases the skill. The **📝 Changelog** check refuses a missing or malformed entry.
+
 ## Feedback
 
 For issues with a skill's instructions or behavior, or with the `galtea-tracing` plugin (not the Galtea product), file an issue at https://github.com/Galtea-AI/skills/issues with the `skill-feedback` label.
