@@ -25,8 +25,12 @@ else
   ancestor=0
   git merge-base --is-ancestor "$last" "$SHA" || ancestor=$?
   if [ "$ancestor" -eq 1 ]; then
-    echo "$SHA is older than the last release $last, which already includes it."
-    exit 0
+    if git merge-base --is-ancestor "$SHA" "$last"; then
+      echo "$SHA is older than the last release $last, which already includes it."
+      exit 0
+    fi
+    echo "::error::$SHA and the last release $last have diverged: $last is not on this history. Move or delete that tag, then re-run." >&2
+    exit 1
   elif [ "$ancestor" -ne 0 ]; then
     exit "$ancestor"
   fi

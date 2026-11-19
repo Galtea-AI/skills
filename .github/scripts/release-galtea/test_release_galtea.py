@@ -77,6 +77,20 @@ class ReleaseGalteaTest(ScriptTestCase):
         self.assertIn("older than the last release galtea--v1.0.1", result.stdout)
         self.assertEqual(self.gh.calls(), [])
 
+    def test_a_last_release_off_this_history_fails(self):
+        before = self.base("galtea--v1.0.0")
+        self.repo.git("checkout", "--quiet", "-b", "side")
+        side = self.repo.commit({"changelog/20261119-1030-side.md": "patch\n\nSide.\n"})
+        self.repo.git("tag", "galtea--v1.0.1", side)
+        self.repo.git("checkout", "--quiet", before)
+        sha = self.repo.commit({"changelog/20261119-1100-docs.md": "major\n\nReads the docs.\n"})
+
+        result = self.release(sha)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("the last release galtea--v1.0.1 have diverged", result.stdout)
+        self.assertEqual(self.gh.calls(), [])
+
     def test_a_push_with_no_new_entry_releases_nothing(self):
         self.base("galtea--v1.0.0")
         sha = self.repo.commit({"README.md": "readme\n"})
