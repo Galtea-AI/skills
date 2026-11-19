@@ -1,415 +1,73 @@
 ---
 name: galtea
-description: Interact with the Galtea platform -- the AI product testing and evaluation platform for AI/LLM products -- and access its documentation. Use when needing to (1) query or modify Galtea data (products, specifications, datasets, metrics including classifier metrics, evaluations, runs, monitors, etc.) via the `galtea` CLI, (2) set up a test pipeline for an AI product, (3) run or monitor evaluations of an AI product, or set up production monitors and alerts, (4) wire an AI product into Galtea via the Python SDK, (5) upload a dataset the user already has, including a CSV with documents, images, or audio attached to its rows, and test a product that reads them, or (6) look up Galtea docs, concepts, or CLI/SDK usage.
+description: Interact with the Galtea platform -- the AI product testing and evaluation platform for AI/LLM products -- and access its documentation. Use when needing to (1) query or modify Galtea data (products, specifications, datasets, metrics including classifier metrics, evaluations, runs, monitors, etc.) via the `galtea` CLI, (2) set up a test pipeline for an AI product, (3) run or monitor evaluations of an AI product, or set up production monitors and alerts, (4) wire an AI product into Galtea via the Python SDK, (5) upload a dataset the user already has, including a CSV with documents, images, or audio attached to its rows, and test a product that reads them, (6) run the whole improvement loop for an AI product: specifications, datasets, evaluations, then changes based on what failed, or (7) look up Galtea docs, concepts, or CLI/SDK usage.
 ---
 
 # Galtea
 
-Galtea is an AI product testing and evaluation platform. Teams use it to define behavioral specifications, generate datasets of test cases, run evaluations (AI-as-judge, deterministic, or human), and iterate their AI products toward production with confidence.
+Galtea is an AI product testing and evaluation platform. Teams describe what their AI product should do in specifications, generate datasets of test cases from them, evaluate the product, and improve it based on what failed.
 
-This skill drives the **`galtea` CLI** on behalf of the user: install the binary, authenticate, discover commands and docs, then run or inspect evaluations. The CLI ships one subcommand per OpenAPI operation under a `galtea <noun> <verb>` tree (e.g. `galtea products list`, `galtea evaluations create-from-version`), so the source of truth for arguments is `galtea <noun> <verb> --help`. This file points at it rather than duplicating endpoint shapes.
+This skill drives the **`galtea` CLI** for the user. It holds only how to work: install, log in, read the docs, and act. Every fact about the platform -- commands, fields, limits, defaults, errors, and what each release changed -- comes from the docs of the deployment the user is logged in to and from `galtea <noun> <verb> --help`, never from this file or from memory.
 
-**How to read this file.** It is a map plus the facts that `--help` and the docs do not make obvious -- not a script. Galtea ships every week or two, so anything stated here can lag the platform: when a command, field or enum disagrees with what you observe, trust the live CLI, the API response and the docs, finish the task, and mention the drift to the user (see "Skill Feedback"). Use judgment on scope -- pick the smallest set of calls that answers the user, and skip sections that do not apply.
+## 1. Install and log in
 
-If the user is new to Galtea, send them through `https://docs.galtea.ai/quickstart`, then `https://docs.galtea.ai/sdk/tutorials/writing-specifications`, then `https://docs.galtea.ai/sdk/tutorials/run-dataset-based-evaluations` -- the shortest zero-to-evaluation path.
+1. Run `galtea --version`. If the command is not found, install the CLI: [references/cli-install.md](references/cli-install.md). Do not run `sudo` install commands without the user's approval; show the command and let them run it.
+2. Run `galtea whoami`. If it is not logged in, ask the user to run `galtea login` themselves and paste their API key at its prompt. For a self-hosted or dedicated platform, they add `--host <their platform address>`. A user without a key creates one in the Galtea dashboard settings.
+3. **If any `galtea` command exits with code `10`, the CLI version does not match the platform.** It prints the install command for a version that does: run it, or show it to the user, then retry. Do not work around it.
+4. **If `galtea docs` does not exist, the CLI is too old for this skill.** Install the latest CLI first.
 
-## Quick Links
+### The API key
 
-| Resource | URL | When to use |
-|---|---|---|
-| Docs index (LLM-optimized) | `https://docs.galtea.ai/llms.txt` | First stop for discovering docs pages. Grep for `/sdk/tutorials/`, `/concepts/`, `/api-reference/`, `/cli/`. |
-| Full docs dump | `https://docs.galtea.ai/llms-full.txt` | When you need all docs content in one fetch (large). |
-| CLI installation | `https://docs.galtea.ai/cli/installation` | Homebrew / apt / dnf / pip paths and verification. |
-| CLI usage | `https://docs.galtea.ai/cli/usage` | Authentication flow + first commands. |
-| OpenAPI spec | `https://api.galtea.ai/openapi.json` | Raw source of endpoint shapes. Prefer `galtea <noun> <verb> --help` -- the CLI reads from this same spec. |
-| Changelog | `https://docs.galtea.ai/changelog` | Check for recent metrics, endpoints, or feature changes. |
-| Quickstart guide | `https://docs.galtea.ai/quickstart` | Onboard new users. |
-| SDK installation | `https://docs.galtea.ai/sdk/installation` | Python SDK setup (`pip install galtea`). |
-| Platform UI | `https://platform.galtea.ai` | Where users manage products, view results, and generate API keys. |
-| Product support | `mailto:support@galtea.ai` | For Galtea product issues (not skill issues). |
+- Never ask for the key through a structured-question tool (option pickers and forms): their contents end up in logs. Take it as free text in the chat, or let the user paste it at the `galtea login` prompt.
+- Never echo the key back, write it to a tracked file, or pass it as a command-line argument. For a non-interactive run, set it in the environment variable that `galtea login --help` names.
+- Never run a CLI command in a debug or verbose mode that prints request headers: the output contains the key. Give that command to the user to run in their own terminal.
 
-Any docs page URL works with a `.md` suffix (e.g. `https://docs.galtea.ai/quickstart.md`) to get clean markdown content.
+## 2. Read the docs first
 
-## How Galtea Works
+Galtea ships often, and each deployment can run a different release. Before you advise on a workflow, a concept or an argument, read it in the docs of the user's deployment.
 
-### Platform entities
+1. Run `galtea docs`. It prints the platform release the user is logged in to, the address of its docs (`Docs:`), and the index of the docs pages (`Index:`).
+2. Fetch the index and find the pages for the task. Search it by topic: a concept, a tutorial, a CLI command, an API operation.
+3. Open each page as Markdown: take its path from the index, put it under the `Docs:` address, and add `.md`. Prefer this over the HTML page: it has the full text. A page that answers 404 there was added after the user's release, so that release does not have the feature.
+4. **Read the known issues of that release before you build anything, and again whenever a call does not behave as its docs say.** They are at `<Docs>/agents/known-issues.md`. The page lists calls that behave differently from the API reference in that release, and what works instead. A 404 means that release lists none.
+5. For the exact shape of a command, run `galtea <noun> <verb> --help`. `galtea --help` lists the nouns, and `galtea <noun> --help` lists the verbs.
 
-The entities the agent will work with most, grouped by lifecycle scope:
+**When the deployment's docs cannot be read**, use the public docs at `https://docs.galtea.ai` the same way, starting from `https://docs.galtea.ai/llms.txt`. This applies when `galtea docs` says on stderr that it printed the public docs, or when the `Index:` or a `.md` page under `Docs:` does not answer. Tell the user once that the public docs describe the newest release, which their platform may not run yet.
 
-- **The product under test:** `Product` -> `Version` -> `EndpointConnection` (how Galtea reaches the running product). Each `Version` carries a `number` unique inside its product, labelled `v7`; the name is optional, and a custom name stays unique inside the product (only the version's own `v<number>` label is exempt). `Specification`s define what the product should do.
-- **What you test with:** `Dataset` groups `TestCase`s. A `Metric` defines how to score -- see "Metric types" below.
-- **How they link:** a `Specification` can hold **any number of `Dataset`s and `Metric`s**. Metrics are many-to-many (one metric can serve several specifications). From API 5.11 a dataset links to any number of specifications of its product too (`specificationIds`), and a run scores its test cases with the metrics of the launched specifications it links to. Deployments on 5.10 or older still hold a dataset in at most one specification, scored with that specification's metrics. A deployment has the new behavior when `datasets get` returns a `specificationIds` list.
-- **What the product produces at runtime:** `Session` -> `Trace` (one turn) -> `Span` (internal tool / LLM calls captured per turn).
-- **How performance is measured:** an `Evaluation` applies a `Metric` to a whole `Session` (conversation-level) or to one `Trace` (turn-level), and carries a `score` (0-1) plus a `passed` verdict against the metric's `passThreshold`. `create-from-version` is the high-level entry point that resolves all of the above for a `Version` in one call -- see "Evaluation creation paths" below.
-- **Grouping and production:** every launch you make leaves a `Run` (`galtea runs …`, SDK `galtea.runs`), which groups its sessions and evaluations and is the unit to compare between iterations. A `Monitor` scores production sessions continuously, with alert rules on top; monitor evaluations belong to no run.
+**When the docs and the platform disagree, the platform wins.** Trust the live response and `--help`, finish the task, and tell the user what differed (see "Skill feedback").
 
-**The REST paths and wire fields kept their pre-rename spelling.** The entities were renamed; the HTTP contract was not. So `Dataset` still lives at `/tests`, `Trace` at `/inferenceResults`, and `Span` at `/traces`, and body and query fields stay `testIds`, `inferenceResultId`, and so on. You see the new names in the CLI nouns and the SDK; you see the old ones in URLs, JSON payloads, and `--flag` names. Both are current -- do not "fix" either to match the other.
+If your agent has a web-fetch tool, use it to read pages. Use `curl` when you need the raw text in a shell pipeline.
 
-Supporting entities: `Model` (LLM the product runs on, linked to a `Version`) is distinct from the evaluator model named on AI-as-judge `Metric`s. `UserGroup` routes `HUMAN_EVALUATION` metrics to specific reviewers.
+## 3. How to work
 
-Read [Concepts Overview](https://docs.galtea.ai/concepts/overview) (append `.md` for clean markdown) for the canonical diagram, schema-validated relationships, and per-concept docs pages.
+- **Use the CLI for everything that talks to the platform.** Never hand-craft HTTP requests when a `galtea` command exists. Use the Python SDK when the work runs the user's AI product from Python, or when the docs say the CLI cannot do a step. The docs page of each task says which tool does what.
+- **Start from what the user has.** Read their code, prompts and documents before you propose anything. Draft the product details and specifications from them, show the list, and create them only after the user agrees. Never invent behaviours the user did not describe: ask.
+- **Let the platform generate test content.** Galtea generates datasets of test cases from specifications. Prefer that over writing test cases by hand, also when the user does not name the feature. When the user already has test content, upload it instead of generating new content. A handful of hand-written rows in a dataset is fine.
+- **Keep each product change behind its own version**, so results stay comparable between iterations. Register a new version before you evaluate a changed product.
+- **Platform work is asynchronous.** Generation and evaluation finish in the background. Poll their status in one list call per cycle, not one call per item, and stop when nothing is left pending.
+- **Report results by the verdict the platform gives.** Each evaluation says whether it passed its metric's threshold: use that, never a cut-off of your own. An evaluation that was skipped or failed to run usually points to a setup problem, not to a weakness of the product: find the reason before you call it a product failure.
+- **Not every failure is the product's fault.** When the product's answer is acceptable, the specification may be wrong or vague. When the judge's reason contradicts the answer, the metric may be wrong. Propose the matching change, and never change a metric just to make failures disappear.
+- **Some operations spend the organization's credits**, such as generation and evaluation. Before a large run, say what it will do and check the credit status as the docs describe.
+- **Read every error body.** It says what went wrong more precisely than the status code. Never retry a refused write blindly.
+- **Pick the smallest set of calls that answers the user.** Show what you created, with its id and where to see it in the dashboard.
 
-### Revisions and history
+## 4. The improvement loop
 
-`Version`, `TestCase`, and `Metric` keep history. Nothing else does -- and **a `Dataset` itself
-has no revisions**, only the `TestCase`s inside it, which is the answer users most often get
-wrong. The three mechanisms differ: editing a `TestCase` forks a new revision and retires the old
-row, a `Metric` revision is created rather than edited, and a `Version` parent link is provenance
-only with nothing retired. No entity has a revision number, and no endpoint returns a family's
-history. Before answering "can I version X?", read
-[references/entity-revisions.md](references/entity-revisions.md).
+When the user wants to improve an AI product with Galtea end to end, run the loop that the docs playbook for improving a product with an AI agent describes. Find it in the index. In short:
 
-### Two evaluation contexts
+1. Define specifications with the user.
+2. Generate datasets from them, and the metrics that score them.
+3. Evaluate a version of the product.
+4. Group the failures, propose product, specification or metric changes, and let the user decide.
+5. Register a new version for the change and evaluate again. Report what improved and what regressed.
 
-| Context | When to use | How it works |
-|---|---|---|
-| **Pre-deployment (dataset-based)** | Regression testing before release against curated or generated `TestCase`s | Create `Dataset` + `TestCase`s, run the agent against them, evaluate. Direct invocation for single-turn; the Conversation Simulator for multi-turn (default for Behavior datasets). |
-| **Production monitoring** | Evaluate real user interactions after deployment | Log `Trace`s from production into a `Session` (single-turn or multi-turn), evaluate asynchronously. |
+Repeat until the failures that matter are gone.
 
-**Multi-turn applies to both contexts.** A `Session` can hold many `Trace`s regardless of origin. By default, only Behavior datasets are *generated* with multi-turn scenarios in mind (`goal`, `userPersona`, `stoppingCriterias`); Accuracy and Security datasets can technically be multi-turn but are typically single-turn.
+## Skill feedback
 
-### Dataset types: the name depends on the surface
-
-`DatasetType` has a user-facing name and a wire value, and they differ. Pick by the surface you are on:
-
-| Meaning | SDK (user-facing) | CLI / raw API (wire) |
-|---|---|---|
-| Quality and correctness | `ACCURACY` | `QUALITY` |
-| Security, safety, and bias | `SECURITY` | `RED_TEAMING` |
-| Multi-turn dialogue | `BEHAVIOR` | `SCENARIOS` |
-
-The **SDK accepts either name** on `galtea.datasets.create(type=...)` and normalizes it (`DatasetType.ACCURACY` is the enum form). The **CLI and raw API accept only the wire value** -- `galtea datasets create type: SCENARIOS` works, `type: BEHAVIOR` does not. `galtea datasets list-types` reports wire values too (the distinct types already in use, not the full catalog). `TestType` is the old name for `DatasetType` and still imports, with a deprecation warning.
-
-### Metric types (verify against docs)
-
-The `MetricSource` enum drives this:
-
-- **Classifier** (`CLASSIFIER`, "Classifier (Jev)" in the dashboard): a small decision model answers **one question** about the data instead of an LLM writing a judgment. User-creatable, but off unless the deployment enables it (`400 Classifier (Jev) metrics are not enabled on this deployment.`; the SDK's `metrics.create` returns `None`). Cheaper and more consistent than a judge for a single yes/no or graded condition; worse for counting, dates, exact matching, or anything needing several checks -- split those into several metrics or use a judge. See "Classifier metrics" below.
-- **AI-as-judge** (`PARTIAL_PROMPT`): An LLM scores the output against a user-written judge rubric; Galtea prepends (or appends, per the metric's parameter-position flag) a structured data block built from the separately-supplied `evaluation_params`. User-creatable. Most common. **Use this for any new AI-as-judge metric.**
-- **`FULL_PROMPT` (creation rejected by the API):** Legacy AI-as-judge variant where the user wrote the entire prompt, including the location of the data (`evaluation_params`). The API rejects `POST /metrics` calls with `source=FULL_PROMPT` -- both explicit and silently inferred (the latter happens when a judge prompt is supplied without `evaluation_params`). Existing FULL_PROMPT metrics still list, filter, and evaluate normally. Use `PARTIAL_PROMPT` for any new metric.
-- **Human evaluation** (`HUMAN_EVALUATION`): A human reviewer scores via the platform. Requires `UserGroup`s. User-creatable.
-- **Self-hosted / user-computed** (`SELF_HOSTED`): You compute the score on your own infrastructure and upload it as a `float` -- either pre-calculated, or computed at runtime via an SDK custom-score class (see `/concepts/metric/evaluation-types` and `/sdk/tutorials/evaluate-with-custom-metrics` for current SDK class names). User-creatable.
-- **Built-in deterministic** (`DETERMINISTIC`, `DEEPEVAL`): Platform-defined classic NLP and DeepEval metrics (BLEU, ROUGE, JSON field match, etc.). Galtea computes the score. **Not user-creatable** -- pick from the catalog.
-
-The enum also holds `GEVAL`, deprecated and not creatable.
-
-Custom-vs-built-in is orthogonal: users can create custom metrics in any of the user-creatable types above. Fetch `/concepts/metric` and `/concepts/metric/evaluation-types` for the authoritative catalog.
-
-**Pass threshold.** Every metric has a `passThreshold` (SDK `pass_threshold`, 0-1, default 0.5), set at creation and changed only by creating a revision. Each evaluation carries `passed` (null when there is no usable score) and the `metricPassThreshold` it was judged at; filter with `galtea evaluations list --passed` (or `--passed=false`) / `evaluations.list(passed=True)`. A human reviewer's score overrides the automatic one. Report pass/fail with `passed`, not with your own cut-off on `score`.
-
-#### Classifier metrics
-
-Before creating a `CLASSIFIER` metric, read [references/classifier-metrics.md](references/classifier-metrics.md): the `classifierQuestion` shape, placeholders, limits that answer `400`, the SDK form, preview verbs and scoring.
-
-## Core Rules
-
-1. **Use the `galtea` CLI for everything that talks to the API.** If `galtea --version` does not return a version, install the binary first (see the CLI Installation section below and [references/cli-install.md](references/cli-install.md)). If `galtea whoami` is not authenticated, run the Authentication flow below before any other call. Never hand-craft `curl -H "Authorization: Bearer ..."` requests when a `galtea` command exists -- the CLI handles auth, retries, output formatting, and follows server-side schema changes via `galtea sync`. The one exception is moving file bytes, which the CLI cannot do: for uploading or downloading a dataset CSV or an attached file, use the Python SDK (see "Upload a dataset the user already has").
-2. **Documentation first -- never advise from memory.** Galtea ships frequently; commands, metrics, and SDK APIs change. Before you advise on a workflow, concept, or argument shape, fetch the relevant docs page (see "Discover docs and commands" below) and run `galtea <noun> <verb> --help` for the live argument shape. **Prefer the raw Markdown form of docs pages by appending `.md` to the route** (for example, `https://docs.galtea.ai/quickstart.md` or `https://docs.galtea.ai/cli/installation.md`) -- it is the fastest and most reliable way to read complete docs content without losing text to tabs or client-side rendering. Examples inlined here are illustrative, not authoritative.
-3. **Discover commands via `galtea --help`.** `galtea --help` lists every resource (`products`, `evaluations`, `sessions`, ...); `galtea <noun> --help` lists verbs under a resource; `galtea <noun> <verb> --help` shows the example invocation, request schema, and response schema for one operation. After the API ships new endpoints, run `galtea sync` to refresh the local spec cache.
-4. **Argument syntax depends on the HTTP verb.** GET / list operations expose query params as kebab-case `--flag` arguments (e.g. `galtea evaluations list --version-ids v1,v2 --statuses PENDING`). POST / create / update operations take body fields via Restish's inline shorthand (e.g. `galtea evaluations create-from-version versionId: ver_xxx`) or JSON on stdin (e.g. `echo '{"versionId":"v1"}' | galtea evaluations create-from-version`). **Separate two or more body fields with commas** (`name: "x", productId: <id>`); without them the parser swallows every later field into the first field's value and the write fails naming the wrong field, which does not read as a syntax error. An array goes through the shorthand only in the bracket form the `--help` examples use (`specificationIds: [spec_1, spec_2]`); a repeated field arrives as a string and the server answers `500`. A comma inside an unquoted value breaks the parse (`Expected colon but got }`, or a Go panic), so quote the value or pipe JSON; a nested body is legal as `foo.bar: 1` but clearer as JSON on stdin: pipe JSON on stdin for those. The `EXAMPLES` block in `--help` shows the right form for each operation. **In non-TTY contexts (scripts, CI, agent harnesses) always redirect stdin on the inline-shorthand form** -- append `</dev/null` (or pipe a JSON body in) -- otherwise the command blocks waiting for stdin even when the inline body is complete. See Gotchas.
-5. **Evaluations are async, but the create response shape varies.** Every launch also lands in a `Run`; `galtea runs get-metric-summary <runId>` summarises one. Version-wide and batch launches (`create-from-version`, `create-from-sessions`, `traces generate`) always open their own run and answer `400` to a `runId`. Only `create-from-session`, `create-from-trace`, `create-single-turn` and `sessions create` take a `runId`, naming a run you opened with `galtea runs create`; close that run yourself with `galtea runs close <id>` (it is never closed automatically). `galtea evaluations create-from-version` returns `202` with `{jobId, message, specifications, testCaseCount, versionId}` -- the rows have not been created yet, so list them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs. Three create paths (`create-from-session`, `create-from-trace`, `create-single-turn`) return `201` with the array of `Evaluation` rows already persisted -- pull IDs straight from that response, no listing step needed. `create-from-sessions` (plural) is a third shape: `200` with a batch summary (`evaluationsCreated`, `sessionsEvaluated`, `sessionsFailed`, `failures`, `truncated`), no rows and no `jobId`, so list by `--session-ids` afterwards. In every case the rows start at `status: PENDING`; **batch-poll** via `galtea evaluations list` (one HTTP request per poll cycle regardless of count) -- prefer a scoped filter (`--version-ids` / `--session-ids` / `--inference-result-ids`) when one is available, since scoped filters can be combined with `--statuses` safely. When you only have raw IDs (e.g. `create-single-turn`), use `--ids` alone and filter status client-side -- see the "`--ids` + any other filter" gotcha below. Only fall back to `galtea evaluations get <id>` when you have a single ID and need its full detail. Stop when no rows remain at `status: PENDING`. Terminal states are `SUCCESS`, `FAILED`, `SKIPPED`, `CANCELLED`, `OUTDATED` (a monitor evaluation whose session reopened), and `PENDING_HUMAN` (waits for a human reviewer -- treat as terminal for polling and surface to the user).
-6. **Soft deletes.** Deleted rows have `deletedAt` set; list endpoints exclude them by default.
-7. **Discover the user's org via `galtea auth get-current-user`.** The authenticated user belongs to exactly one org, exposed as `organizationId` on the returned `User`. For credit status: `galtea organizations get-credit-status <organizationId>` (positional id), which returns `remainingCredits`, `monthlyCredits`, `isLowCredits`, `isExhausted`.
-8. **`list` endpoints default to your own org.** A bare `galtea <noun> list` (no filters) returns only the entities in *your* organization -- the API key implies the org, so you never pass an org id to see your own data. Narrow within your org via the relation filters shown in `--help` (`--product-ids`, `--version-ids`, …).
-
-## Environment
-
-| Variable | Purpose |
-|---|---|
-| `GALTEA_API_KEY` | `gsk_*` bearer token. When set, takes precedence over the cached key in `apis.json`. Useful for CI / scripts / Docker; once `galtea login` has run on a developer machine, this is optional. |
-| `GALTEA_CONFIG_DIR` | Override the per-user config directory where `apis.json` (host + token) lives. Defaults: `~/.config/galtea` (Linux), `~/Library/Application Support/galtea` (macOS), `%AppData%\galtea` (Windows). |
-| `GALTEA_CACHE_DIR` | Override the cache directory for the parsed OpenAPI spec (`raw.cbor`). Defaults to `~/.cache/galtea/`. |
-| `NO_COLOR` | Set to any value to disable ANSI color in CLI output. |
-
-Run `galtea help environment` for the canonical list as the binary sees it.
-
-The changelog at `https://docs.galtea.ai/changelog` lists every new metric, endpoint, and feature by date -- consult it when the user asks about something recent.
-
-## CLI Installation
-
-If `galtea --version` does not return a version, install the CLI before doing anything else. The full Homebrew / apt / dnf / pip install paths and verification steps live in [references/cli-install.md](references/cli-install.md). Quickest path on any OS with Python 3.9+:
-
-```bash
-pip install galtea-cli
-galtea --version
-```
-
-The PyPI wheel bundles the same `galtea` binary used by every other channel. For Homebrew, Debian/Ubuntu (`apt`), Fedora/RHEL/Rocky/Alma (`dnf`/`yum`), and the official repository setup, see [references/cli-install.md](references/cli-install.md). Do not run `sudo` install commands on the user's machine without their explicit approval -- surface the command and let them run it.
-
-## Authentication
-
-Galtea uses bearer-token auth. The CLI handles the `Authorization` header, retries, and key persistence -- you do not write `curl -H "Authorization: Bearer ..."` yourself.
-
-### First-time login
-
-```bash
-galtea login
-# Paste your gsk_* API key when prompted.
-# The CLI validates against the server, stores the key at the platform
-# config dir (mode 0600), and refreshes the OpenAPI command tree in the same step.
-```
-
-If the user does not have a key, send them to `https://platform.galtea.ai/settings`. An account has one key by default; regenerating it permanently replaces it. Enterprise plans can hold several named tokens, managed with `galtea api-tokens list | create | rename | revoke | regenerate`. Keys are shown once -- they should store it somewhere safe before closing the page.
-
-### Non-interactive (CI, Docker, scripted agents)
-
-```bash
-export GALTEA_API_KEY=gsk_...
-galtea login          # optional once GALTEA_API_KEY is exported
-```
-
-When `GALTEA_API_KEY` is set, `galtea login` becomes optional -- API calls pick up the env var directly. Run `galtea login` once on a developer machine to also refresh the OpenAPI command tree; in a short-lived CI job that runs only one or two API calls, the env var alone is sufficient.
-
-There is intentionally **no plaintext `--api-key` flag** -- a flag value lands in shell history (`~/.bash_history`, `~/.zsh_history`) and `ps` listings, so credentials passed that way leak. Use the env var or the interactive prompt.
-
-**Receiving a pasted key from the user.** Take the key as sensitive free-text in the chat; do **not** use any structured-question tool (e.g. Claude Code's `AskUserQuestion`) for this -- pasting secrets into option metadata leaks them into logs. Either (a) ask the user to run `galtea login` themselves and paste at the CLI prompt, or (b) accept the key in chat and pass it once via `GALTEA_API_KEY=<key> galtea login` -- never echo it back, never write it to a tracked file.
-
-### Self-hosted / staging
-
-```bash
-galtea login --host https://galtea.your-company.example.com
-```
-
-The host is persisted in `apis.json`; subsequent calls hit that host until you run `galtea login` again with a different `--host`.
-
-### Verify
-
-```bash
-galtea whoami                  # host + key fingerprint + auth status (exits non-zero if not authenticated)
-galtea auth get-current-user   # full User object, including organizationId
-galtea health                  # pings the API; useful as a connectivity probe
-```
-
-### On 401 from a previously valid key
-
-The key was rotated or revoked. Reset:
-
-```bash
-galtea logout
-galtea login          # paste the new key
-```
-
-## Discover docs and commands
-
-### Docs index (`llms.txt`)
-
-Cache the index under `/tmp` with a 24-hour TTL so you do not re-download each turn:
-
-```bash
-if [ ! -f /tmp/galtea-llms.txt ] || \
-   [ -n "$(find /tmp/galtea-llms.txt -mmin +1440 2>/dev/null)" ]; then
-  curl -s https://docs.galtea.ai/llms.txt > /tmp/galtea-llms.txt
-fi
-
-grep '/sdk/tutorials/'  /tmp/galtea-llms.txt   # tutorials (end-to-end playbooks)
-grep '/concepts/'       /tmp/galtea-llms.txt   # entity definitions + hierarchy
-grep '/api-reference/'  /tmp/galtea-llms.txt   # per-endpoint reference pages
-grep '/cli/'            /tmp/galtea-llms.txt   # CLI installation / usage
-
-# Fetch one specific page as clean markdown (append .md to any page URL)
-curl -s https://docs.galtea.ai/sdk/tutorials/run-dataset-based-evaluations.md
-```
-
-For end-to-end playbooks (creating a product, simulating conversations, tracing an agent, human evaluation, production monitoring) look under `/sdk/tutorials/`. For entity definitions and the hierarchy between them look under `/concepts/`. For per-endpoint reference pages look under `/api-reference/`. For CLI installation and usage, look under `/cli/`.
-
-**Tool preference for doc fetching.** If your host agent provides `WebFetch` / `WebSearch` (Claude Code, Cursor, etc.), prefer them over `curl` -- they handle summarization, caching, and large-page trimming for free. Use `curl` when you need raw bytes for a `grep` pipeline, when caching to `/tmp`, or when no native fetch tool is available.
-
-### CLI commands
-
-```bash
-galtea --help                     # all resources (products, evaluations, sessions, ...)
-galtea <noun> --help              # all verbs under one resource
-galtea <noun> <verb> --help       # description, request schema, response schema, examples
-galtea sync                       # refresh the local OpenAPI command tree after an API release
-galtea raw <verb>                 # escape hatch for the bare Restish form (hidden from --help, still works); takes the kebab verb, e.g. `galtea raw get-current-user`
-```
-
-The CLI re-parents every OpenAPI operation under a `<noun>` parent generated from the spec's `tags`, with the `x-cli-name` extension as the verb; the four tag-less routes (`health`, `minimum-sdk-version`, `build-info`, `build-info-services`) stay at the top level. The resource list always reflects the latest `galtea sync`.
-
-### Output formats
-
-```bash
-galtea X Y                  # default is `auto`: human-readable on a TTY, JSON when piped -- pass -o json to be sure
-galtea X Y -o table         # only valid against array/list responses; on an object or an error body the command fails with `error building table. Must be array of objects`
-galtea X Y -o json | jq …   # pipe through jq for ad-hoc filtering
-galtea X Y -f body.id       # restish result filter (single field, no jq needed)
-```
-
-For debugging an HTTP-level issue, `-v` or `--verbose` makes the CLI print the underlying request/response. **That output includes the full `Authorization: Bearer gsk_...` header.** Never run it as an agent and never run it in CI: the captured tool output or the build log is itself the leak, and a key that lands in one has to be rotated. Hand the command to the user instead, to run in their own terminal, and tell them to delete the `Authorization` line before they paste any of it into a reply, an issue, or a bug report. (Note: `-V` is bound to `--version`; both `-v` and `--verbose` enable HTTP debug output.)
-
-## Evaluation creation paths
-
-Choose the right creation command based on what the user wants to evaluate. For a complete end-to-end CLI walkthrough of the `create-from-version` path (find product -> find version -> create -> list PENDING -> poll), read [references/evaluate-version.md](references/evaluate-version.md) -- fetch it whenever the user asks to run a full evaluation pass on a version, kick off evaluations, or needs to see the async lifecycle concretely.
-
-| User goal | Command | Key input | Notes |
-|---|---|---|---|
-| Evaluate all datasets for a version at once | `galtea evaluations create-from-version` | `versionId: <id>` | Resolves specs, metrics, and datasets automatically |
-| Evaluate a specific conversation | `galtea evaluations create-from-session` | `sessionId: <id>` | Optional `metrics`, `specificationIds` body fields to narrow scope |
-| Evaluate a single turn (production monitoring) | `galtea evaluations create-from-trace` | `inferenceResultId: <id>` | Body field keeps the old name -- see the wire-contract note above. Optional `metrics`, `specificationIds` |
-| Quick one-off evaluation without sessions | `galtea evaluations create-single-turn` | `actualOutput`, `metrics`, and a `versionId` or `productId` | With `productId` the platform reuses the product's latest version, creating one only if the product has none. `testCaseId` is required while `isProduction` is false; set `isProduction` true and `input` replaces it. The two are exclusive |
-| Evaluate many existing sessions at once, no endpoint connection needed | `galtea evaluations create-from-sessions` | `sessionIds: [...]` or `versionId`, optional `metrics` / `specificationIds` | Imported traces; returns a `200` batch summary, then list by `--session-ids` |
-| Re-run failed evaluations | `galtea evaluations retry` | `ids: [e1, e2, e3]` (body) | Eligibility is the evaluation's `canRetry` flag, not its status, so a credit-exhausted `SKIPPED` retries too. Non-retriable ids come back counted in `skipped` rather than as a 404; returns 202 with `{retried, skipped, errors}` |
-| Replay onto a new metric revision | `galtea evaluations replay-from-metrics` | `metricGroupId`, `newMetricId`, `productIds` (body) | Returns 202 |
-| Replay onto a new test case revision | `galtea evaluations replay-from-test-cases` | `testCaseGroupId`, `newTestCaseId`, `productIds` (body) | `newTestCaseId` must be the active head of its family. Fresh inference is generated per version before scoring, production sessions excluded; returns 202 |
-
-The create paths split into three groups by response shape:
-
-- **`create-from-sessions` -- synchronous batch, returns 200 + a summary** (`evaluationsCreated`, `sessionsEvaluated`, `sessionsFailed`, `failures`, `truncated` at 1000 sessions). No rows and no `jobId` come back; list them with `galtea evaluations list --session-ids <ids>`.
-- **`create-from-version` -- async, returns 202 + `jobId`.** The actual evaluation rows are created in the background. List them with `galtea evaluations list --version-ids <id> --statuses PENDING` to learn their IDs (this is the path walked end-to-end in [references/evaluate-version.md](references/evaluate-version.md)).
-- **`create-from-session`, `create-from-trace`, `create-single-turn` -- synchronous-creation, return 201 + array of `Evaluation` rows.** Pull IDs straight from the response; no separate listing step needed. Then **batch-poll** the whole set in one call:
-
-  ```bash
-  # Capture the array, build a comma-separated id list, then poll the batch.
-  # `list --ids` returns the full Evaluation rows in one HTTP request,
-  # avoiding the N-call overhead of looping `evaluations get` per id.
-  # </dev/null on the create call is required in non-TTY contexts -- see Gotchas.
-  IDS=$(galtea evaluations create-from-session sessionId: <sessionId> -o json </dev/null | jq -r '[.[].id] | join(",")')
-  galtea evaluations list --ids "$IDS" -o json | jq '.[] | {id, status, score}'
-
-  # Poll until none are PENDING. Filter status CLIENT-SIDE -- combining `--ids` with
-  # `--statuses PENDING` triggers a false 404 once the rows leave PENDING (see Gotchas).
-  while [ "$(galtea evaluations list --ids "$IDS" --no-cache -o json | jq '[.[] | select(.status == "PENDING")] | length')" -gt 0 ]; do
-    sleep 5
-  done
-  galtea evaluations list --ids "$IDS" -o json | jq '.[] | {id, status, score}'
-  ```
-
-  Substitute `create-from-trace` (with `inferenceResultId: <id>` -- the verb took the new name, the body field kept the old one) or `create-single-turn` (see `--help` for the body shape) -- the response shape and follow-up polling are identical.
-
-In all three groups, individual evaluations start at `status: PENDING` and reach `SUCCESS` / `FAILED` / `SKIPPED` / `PENDING_HUMAN` (or, rarely, `CANCELLED` / `OUTDATED`) as workers process them. Prefer `galtea evaluations list --ids …` (or `--version-ids` / `--session-ids` if the scope already filters them) over a per-id loop with `evaluations get`; the batch call traffics one HTTP request per poll cycle regardless of how many evaluations you queued. Treat `PENDING_HUMAN` as terminal for polling -- it waits for a human reviewer.
-
-## Upload a dataset the user already has
-
-When the user already has the test content, upload it instead of generating it. Route by what
-they hold:
-
-| The user has | Path |
-|---|---|
-| A CSV of rows | `galtea.datasets.create(dataset_file_path="./rows.csv")` -- rows are parsed server-side |
-| Documents, images, or text and data files to attach to rows | Upload the bytes, then reference the storage URI in the row's `input` |
-| Both | Add an `input_file_paths` column to the CSV; the SDK uploads each file first |
-| A document dataset and an HTTP endpoint | Put `{{ input_files[0].url }}` (or `.base64`) in the endpoint connection template, then run the dataset as usual |
-| A document dataset and a Python agent | `evaluations.run(agent=...)` with an `AgentInput`-annotated callback; the files arrive as `input_data.input_files` |
-| A stored `uri` and wants the file | `galtea.storage.download(input_file)` saves it under its uploaded name (a bare `uri` string saves under the random storage key), `galtea.storage.read(input_file)` returns the bytes; from a terminal, `galtea storage generate-get-url --uri <uri>` then fetch the `downloadPresignedUrl` |
-
-**Use the Python SDK for any upload or download.** It is the one place this skill prefers the
-SDK over the CLI: the CLI mints the URLs and creates the dataset, but it cannot move file bytes --
-`field: @/path` inlines the file into the JSON body (text as a string, a PDF as base64) instead
-of uploading it. For a terminal-only
-flow, `galtea storage generate-put-url` then `curl -X PUT`, and `generate-get-url` then `curl` to
-read a file back.
-
-Four things that change what you tell the user, before any command:
-
-- **A dataset created from a file skips generation**, so it draws no generation credits and
-  ignores `max_test_cases`. It is not unconditionally free: a `credits_used` column in the CSV is
-  charged on import, see the gotcha below. Creating a dataset with neither a file nor `empty: true`
-  runs a generator and spends credits. `galtea datasets create … empty: true` makes an empty
-  dataset to fill by hand for free (CLI/API only, not the SDK, and not combinable with a file,
-  `sourceTestId` or generation fields), but `test-cases create` is one request per row, with no
-  batch endpoint, so a CSV is still the better path for more than a handful of rows.
-- **Galtea delivers the file to the product; a judge reads it only when its model reads that kind.**
-  A platform run sends each attachment to the endpoint through the `input_files` template variables,
-  and an SDK callback annotated `AgentInput` receives it as `input_data.input_files`. A judge is sent
-  PNG, JPEG, WebP, GIF and PDF files only, and only when the metric's judge model reads that kind.
-  Any other metric that reads a side carrying a file is **skipped** before it runs, with a reason that
-  names the file; text beside the file does not rescue it, and `conversation_turns` reads both sides.
-  A deployment that does not send files to the judge also skips the rest. Say this before the user
-  builds a document dataset, and route them to a metric whose judge model reads the file, to scoring
-  their pipeline's output, or to logging the extracted text as the turn input in a manual loop.
-- **File types are a fixed list**, checked by the SDK before it uploads and again by the API when the test case is written: documents (`pdf`, `docx`, `xlsx`,
-  `pptx`, `rtf`), images (`png`, `jpg`, `jpeg`, `tiff`, `tif`, `bmp`, `webp`, `heic`, `heif`,
-  `gif`) and text or data (`txt`, `csv`, `md`, `html`, `xml`, `json`, `eml`). **Audio is not on
-  it** -- a voice clip is its own part type, not a file. State the list before the user picks a
-  file. A test case also caps at 20 files and 20 MB *in total*, not per file, and runs as a
-  single turn only.
-- **The whole file surface is on Galtea Cloud since release 5.3.0 (2026-09-14) and needs
-  `galtea>=5.3.0`.** Check `pip show galtea` first: 5.2.0 uploads and downloads but its agent
-  callback never sees a file. A self-hosted deployment can lag;
-  [references/custom-dataset-upload.md](references/custom-dataset-upload.md) opens its attachment
-  section with the version gate: `galtea build-info` when the key may read it, else a
-  `generate-put-url --file-type file` probe that only separates pre-5.2 from 5.2+.
-
-Full procedure -- required columns per dataset type, the all-or-nothing row validation, the
-limits, the upload envelope, the three runners that deliver a file, and the terminal path -- in
-[references/custom-dataset-upload.md](references/custom-dataset-upload.md).
-
-## Common Workflows
-
-Each workflow below maps to a docs page. Fetch the page via `llms.txt` before advising -- the skill provides routing, not the full procedure.
-
-| User wants to... | Workflow | Docs path |
-|---|---|---|
-| Get started from zero | Quickstart: create product, install SDK, create dataset, choose metric, run evaluation | `/quickstart` |
-| Define what their product should do | Write specifications, then auto-generate datasets and metrics from them | `/sdk/tutorials/writing-specifications` |
-| Run dataset-based evaluations | Create datasets + metrics, run agent against test cases, evaluate | `/sdk/tutorials/run-dataset-based-evaluations` |
-| Use specifications to drive everything | Spec-driven flow: specs generate metrics + datasets, then evaluate | `/sdk/tutorials/specification-driven-evaluations` |
-| Test multi-turn conversations | Simulate user conversations against the agent, then evaluate sessions | `/sdk/tutorials/simulating-conversations` |
-| Evaluate past conversations | Evaluate already-completed multi-turn sessions | `/sdk/tutorials/evaluating-conversations` |
-| Monitor production responses | Log real user queries as traces, evaluate asynchronously | `/sdk/tutorials/monitor-production-responses-to-user-queries` |
-| Score production continuously and get alerted | Create a `Monitor` bound to metrics or to `specificationIds` (Policy/Capability only), add alert rules (email `recipients`, or a `webhookUrl`; a Slack incoming-webhook URL posts to its channel) | `/concepts/product/monitor` |
-| Group launches and compare iterations | SDK: `with galtea.runs.start(...)` -- sessions, evaluations and `evaluations.run` with an agent join it, and leaving the block closes it. CLI: each `create-from-version` is already one run; for per-session/trace launches, `galtea runs create`, pass `runId` to them, then `galtea runs close <id>` | `/concepts/product/run` |
-| Score one condition cheaply and consistently | Create a `CLASSIFIER` metric with a yes/no or scale question | `/concepts/metric/classifier` |
-| Set up human evaluation | Create UserGroups, link a Human Evaluation metric, group members score pending evaluations in the dashboard | `/sdk/tutorials/human-evaluation` |
-| Trace agent internals | Capture internal tool calls / LLM calls as Span records | `/sdk/tutorials/tracing-agent-operations` |
-| Integrate with CI/CD | Run evaluations in GitHub Actions | `/sdk/integrations/github-actions` |
-| Upload a CSV of existing test cases | Create the dataset from a local CSV; rows are parsed server-side and draw no generation credits | [references/custom-dataset-upload.md](references/custom-dataset-upload.md) |
-| Test an AI that reads documents | Attach each file to a test case input, let Galtea deliver it to the endpoint or the `AgentInput` callback, score the output | `/sdk/tutorials/evaluate-document-inputs`, then [references/custom-dataset-upload.md](references/custom-dataset-upload.md) for the rules |
-| Send an attached file to an HTTP endpoint | Name `{{ input_files[0].url }}` / `.base64` / `.filename` / `.mime_type` in the endpoint connection template | `/concepts/product/endpoint-connection-template-syntax#attached-files-and-audio` |
-| Version a test case or a judge | Edit a test case to fork a revision, or create a metric with `parentMetricId`; then replay | Local file, not a docs page: [references/entity-revisions.md](references/entity-revisions.md) |
-
-For other workflows (custom datasets, judge prompts, agentic evaluation, custom metrics, platform-only inferences, Langfuse integration, model tracking), grep `llms.txt` for the relevant tutorial.
-
-To fetch any page: `curl -s "https://docs.galtea.ai<path>.md"` or use `WebFetch`.
-
-## CLI vs Python SDK
-
-This skill drives the `galtea` CLI by default -- it covers everything the REST API does. For workflows that involve actually *running* the user's AI product (the agent-function loop, conversation simulation, tracing internal LLM/tool calls, inline production logging), the [Python SDK](https://docs.galtea.ai/sdk/installation) (`pip install galtea`) is usually the better fit. For the decision framework and SDK routing hints, see [references/cli-vs-sdk.md](references/cli-vs-sdk.md). Mixing the CLI and SDK in one project is safe -- they target the same backend.
-
-When wiring an agent function for `galtea.evaluations.run(...)` or the simulator, **annotate the first parameter** -- the SDK picks the argument shape from it (`str` → latest user message, `galtea.AgentInput` → structured input, anything else **including no annotation** → a `list[dict]` chat history). The recommended approach is to use the signature `def my_agent(messages: list[dict]) -> str` or the `galtea.Agent` / `galtea.AgentInput` adapter; an unannotated first parameter receives a `list[dict]` (the SDK warns once per agent and appends a hint to the failed trace), which crashes string-assuming agents. The match is by identity, so a stringified annotation (`from __future__ import annotations`), `Optional[AgentInput]`, or a subclass also falls through to `list[dict]`. **Only the `AgentInput` / `Agent` shape receives attached files** (`input_data.input_files`); a `str` or `list[dict]` agent gets a one-time warning when a test case also has text, and a `FileOnlyTextAgentException` that fails the trace when it has files only. See [references/cli-vs-sdk.md](references/cli-vs-sdk.md) for the full mapping.
-
-## Gotchas
-
-Runtime behaviors that are not in `--help` text -- these are the only items a well-informed agent still needs explicit reminders for.
-
-- **Body-taking commands hang on stdin in non-TTY contexts.** Every POST / PUT / PATCH command (`evaluations create-from-*`, `evaluations retry`, `evaluations replay-from-metrics`, `products create`, `versions update`, …) reads stdin when it's open, even when you provide all required fields via the inline shorthand form. In an interactive terminal this is fine. In scripts, CI jobs, agent harnesses, or piped invocations the command blocks forever -- the parse already succeeded, but the process never returns. Always either redirect stdin (`galtea X create field: value </dev/null`) or pipe a JSON body in (`echo '{...}' | galtea X create`). Symptom: command produces no output and the harness eventually times out.
-- **JSON Field Match rules in `expected_output` need doubled backslashes.** The expected output is JSON, so a rule such as `{"$regex": "\\d{3}"}` writes `\\d`, never `\d`. A single `\d` is invalid JSON, and a single `\b` turns into a backspace; the metric refuses both and the evaluation is `SKIPPED`. When `expected_output` is a string field inside a JSON request body (`echo '{...}' | galtea …`), escape once more: `\\\\d`. See `references/custom-dataset-upload.md`.
-- **`--sort` takes `field,direction` pairs -- do not use a leading `-` for descending.** On list endpoints, pass sort values like `--sort createdAt,desc`. Do **not** write `--sort -createdAt` -- the CLI parses `-createdAt` as a bundle of short flags, and `-t`/`--timeout` can end up consuming `edAt` as a duration argument, causing the command to fail before the request is sent.
-- **`--ids` + any other filter yields false 404s.** Across every `list` endpoint that accepts `--ids` (evaluations, sessions, versions, products, metrics, …), the server compares `entitiesReturned.length` to the requested id count *after* all filtering has run and throws `404 "<Entity>s not found: <id-list>"` (or `"<Entity> <id> not found"` when exactly one id is missing; `<Entity>` is the display name, so `Trace` for `/inferenceResults` and `Span` for `/traces`) when they differ. So combining `--ids id1,id2,id3` with **anything else** -- `--statuses PENDING`, `--from-created-at`, `--include-legacy=false`, even another id-list filter like `--metric-ids` -- yields a 404 listing every id whose row was excluded by the *other* filter, even though the ids exist. This is especially mean in poll loops: once your evaluations leave `PENDING`, `list --ids "$IDS" --statuses PENDING` flips from `[]` to a 404 error object, and `jq 'length'` on that object returns `1` (one key: `message`), trapping a naive `while … -gt 0` forever. **Relation-id filters (`--version-ids`, `--session-ids`, `--inference-result-ids`, `--product-ids`, `--metric-ids`, `--test-ids`, …) are NOT subject to this check** and combine freely with each other and with `--statuses` / date ranges. Note the flag names come from the wire fields, so `--test-ids` filters by dataset and `--inference-result-ids` filters by trace. Two safe patterns: **(a)** if you have a relation scope (versionId, sessionId, inferenceResultId, productId), filter by `--<scope>-ids` instead of `--ids` -- those combine cleanly with `--statuses`; **(b)** if you only have raw primary-key ids, use `--ids` alone (no other filter) and filter status client-side via `jq '[.[] | select(.status == "...")] | length'`.
-- **`--ids` with many IDs is rejected before the application answers.** `--ids` values go into the query string as one repeated `ids=<id>` parameter per id, so a long list is refused by the proxy in front of the API with a raw HTML page, not JSON, and piping through `jq` then crashes too. Which page depends on the environment: on dev, nginx answers `414 Request-URI Too Large` at roughly 500 to 600 ids (~15 KB); production sits behind a WAF that has answered `403 Forbidden` at as few as ~50 evaluation-length IDs (~2.3 KB). Prefer relation-id filters (`--version-ids`, `--product-ids`, `--session-ids`, …) which send a single parent id regardless of how many child rows exist. When you only have raw primary-key ids, **batch requests to ≤ 50 ids each**.
-- **Boolean filters are bare flags, not `--flag true`.** CLI booleans like `--has-inference-results`, `--existent-in-evaluations`, `--can-retry` take no value: presence sends `true`; absence omits the parameter, so the server default decides (`true` for `includeLegacy`, which is why that one needs the `=false` form). `galtea versions list --has-inference-results true` errors with `accepts 0 arg(s), received 1`. In `--help`, the `FLAGS` block shows no type after the name (`--has-inference-results` rather than `--has-inference-results bool`) while the `Option Schema` block above it says `(boolean)` -- that is the cue.
-- **`specifications create` takes `type: CAPABILITY | INABILITY | POLICY`, never a dataset type.** The dataset kind goes in `testType` (`QUALITY` / `RED_TEAMING` / `SCENARIOS`, wire names) and is required for `POLICY` only; `name`, `description` and `productId` are required for every type. Writing `type: QUALITY` is a `400`.
-- **Attaching an existing dataset to a specification works from the specification side on every deployment -- on 5.10 or older do not conclude it's impossible from `datasets update`. A metric links from either side.** From API 5.11, `datasets create` and `datasets update` take `specificationIds`, a full list like the metric side (`[]` unlinks all, leaving it out keeps the links), and `specificationId` is deprecated and read-only (the oldest link). On 5.10 or older, `specificationId` is settable only at `datasets create`, after which `datasets update` mutates only `name` and `metadata`. `specifications update` takes no link field at all: it accepts only `name`, `description`, `type`, `testType`, `testVariant` and `useForTestAlignment`, and answers `400` to `metricIds` even though its OpenAPI schema lists that field. From the metric side, `galtea metrics update <id> specificationIds: [spec_1, spec_2]` sets the metric's **full** list: a linked specification missing from it is unlinked, `[]` unlinks every one, and leaving the field out keeps the links. Each specification must belong to the metric's organization. A Galtea default metric is the exception: only a platform admin may update it, so a customer links one with `specifications link-metrics`. Either way, the dataset link is also managed via dedicated verbs -- `galtea specifications link-datasets | unlink-datasets | link-metrics | unlink-metrics` (POST/DELETE `/specifications/{id}/tests` and `/specifications/{id}/metrics`, and the link body field is `testIds`), with `galtea specifications list-datasets` / `galtea specifications list-metrics` to inspect what is currently linked. Note the create/get responses do not echo linked datasets/metrics back -- verify a link took effect via `galtea specifications list-datasets` / `galtea specifications list-metrics`, not by re-reading the specification. A specification takes as many datasets and metrics as you link, but `link-datasets` only accepts `POLICY` / `CAPABILITY` specifications, and requires the dataset's type to equal the specification's `testType`. From 5.11 it adds a link and keeps the dataset's other links; on 5.10 or older it **moves** a dataset that already belongs to another specification without warning -- check `datasets get <id>` first if that matters.
-- **Datasets must be `status: SUCCESS`** before a version-wide run (`create-from-version`) picks them up. Every other status (`PENDING`, `AUGMENTING`, `EXTENDING`, `FAILED`, `CANCELLED`) is dropped: silently while one `SUCCESS` dataset remains, and as a `400` `No tests linked to specifications found` when none does. A run that names a dataset or test case id directly (`traces generate`) performs no status check; a `PENDING` dataset simply has no test cases yet. Workflow constraint, not a schema rule.
-- **Duplicate names return `400 Bad Request`** (not 409) -- the underlying unique-constraint violation is caught server-side and re-thrown as a bad-request error across every create endpoint (products, versions, datasets, metrics, endpoint connections, user groups, models, sessions, specifications, evaluations). The body `message` consistently contains the substring `"with the same"` followed by the colliding fields, but the surrounding wording varies per entity. Examples: `"A Product with the same Name already exists."`, `"A Test with the same Name and Type already exists."`, `"An EndpointConnection with the same name already exists for this product."`, `"A Specification with the same description and type already exists for this product."`, `"An Evaluation with the same Version and Test already exists."`, `"A Session with the same customId: '...' already exists for version with ID: '...'."`. Those two messages really do still say `Test` -- the server text was not renamed, so match it as quoted. Match on `"with the same"` (case-insensitive) to distinguish unique-constraint violations from other 400s; do not blind-retry.
-- **Span rows may have `null` `inputData` / `outputData` / `metadata`** even on valid rows (note the exact field names -- it is `inputData`, not `input`; there is no `attributes` field). Null-guard before reading. Spans are `galtea spans` on the CLI and live at `/traces` on the wire.
-- **Credits are consumed** by evaluations, dataset generation, and a `credits_used` column in an uploaded dataset CSV -- reads and auth are free. For a pre-flight check, call `galtea auth get-current-user` to resolve `organizationId`, then `galtea organizations get-credit-status <organizationId>`, which returns `remainingCredits`, `monthlyCredits`, `isLowCredits` and `isExhausted`. When an org runs out, operations fail with a `400` and the credit text in `message`, and evaluations that hit the limit mid-run land as `SKIPPED` with `canRetry` true; there is no dedicated HTTP status for it, so inspect the message rather than matching on a code.
-- **Error response shape is nearly stable; coverage in OpenAPI is not.** Every body the shared error handler sends is `{message: string}`, and no branch of it ever adds `error`, though the OpenAPI `Error` schema declares `{error, message}`. Seven public operations reject a bad request before reaching that handler, and those send `{error: string}` with no `message` at all: `galtea analytics get | export | get-insights | compare-insights`, `galtea jobs get | cancel`, and `galtea test-cases augment`. The auth middleware sends both fields. Other routes answer in that shape too, but every one of them carries `x-internal: true`, which strips it from the published spec, so no CLI or SDK call can reach it -- do not add them to this list. `401` is declared on ~every operation, `404` and `400` are declared on many, but `500` and runtime-only codes (credit exhaustion, upstream failures, race conditions) are frequently undeclared. On any non-2xx, read `message` from the body before deciding what to do, and fall back to `error` when `message` is absent -- do not rely on the HTTP code alone, and do not assume the spec enumerates everything the server can return.
-- **A bad row in an uploaded dataset CSV deletes the dataset, and a missing column returns a bare `500`.** Validation is all-or-nothing: the first bad row stops the whole import, the insert is one transaction, and the dataset row itself is then deleted, so the user is never left with a partial dataset. Which status comes back depends on what is wrong. A **missing required column** is raised as a plain error and lands in the server-error branch, and since 5.3.0 that body says only `Something went wrong`: the row text (`Row 3 is missing required fields: input`) lives in the API log, and its row number counts parsed non-empty rows and excludes the header, so it may not match the file's line number. Every other server fault on that route answers with the same body, so check the CSV header first on a `500`; when the header is complete, it is a real platform error and worth reporting. An **invalid value** in a row, such as an unrecognised `gender` or `language`, is a normal, correctly coded `400`, and its `message` names the offending value (`gender must be one of MALE, FEMALE, got "m"`), never the row -- the check runs in a loop that carries no index. A header-only CSV does not error; it creates an empty dataset.
-- **The two presigned-URL commands return different field sets.** `galtea storage generate-put-url` returns `{downloadPresignedUrl, uploadPresignedUrl}`, so the link you upload with is `uploadPresignedUrl`; `galtea storage generate-get-url --uri <storedUri>` returns `{downloadPresignedUrl}` alone. Its `key` argument is the **file name**, not a storage path -- the key is minted server-side under the organization's own folder, and a URI outside that folder is refused at write time. Both URLs expire in 24 hours, and an upload URL is a write capability for that object: never echo one into a log, a reply, or a bug report.
-- **`credits_used` in a dataset CSV is charged to the organization.** It is an accepted column, so a value copied out of an export spends real credits on import. Drop the column unless the user means it. In the same file, `tag` sets the test case's variant while a column named `variant` is silently ignored.
-- **A template with no `input_files` variable runs a text-plus-file test case without the file, and only warns.** Only a file-only test case is refused outright, with a `400` before the run starts (`Test case <id> attaches files and nothing else, but the endpoint connection template names no {{ input_files }} variable...`). A test case that also carries text runs on the text alone and the `202` carries a `warnings` list; the dashboard shows it, a script must read it, or the run scores an endpoint that never saw the document. `{{ input.content[0].uri }}` renders nothing, so the four `input_files` properties (`url`, `base64`, `filename`, `mime_type`) are the only way a file reaches an endpoint. The `url` lives 15 minutes and is re-minted per attempt; the `generate-get-url` link lives 24 hours. A run that attaches files against a template naming `input_files` skips the pre-run health check, so a broken endpoint appears as failed turns, and the dashboard's Test connection sends a placeholder attachment (a `storage.example.com` URL) whose download is expected to fail.
-- **A metric that reads a side carrying a file skips unless its judge model reads that kind.** Only PNG, JPEG, WebP, GIF and PDF are ever sent. A metric also skips when it names no judge model, when the model catalog says its model cannot read that kind or does not say, when it is DeepEval-based, deterministic or a classifier metric (text only), when the file is a type no judge reads (DOCX, CSV, TIFF, HEIC), or when the audio has no transcript; the reason names the file, its turn and what refused it. Human evaluation and self-hosted metrics never skip for a file. `evaluations.run()` and a platform run write the envelope as the turn input and cannot override it; to have a document's extracted text scored, log it as the turn `input` in a manual `traces.create_and_evaluate(...)`. `traces.create` / `update` / `create_and_evaluate` also take `input_file_paths` to store the files on a logged trace (`input` becomes optional), and `traces.update` replaces the whole input. The Run Evaluation dialog greys out what the run would skip and names the reason. The reason sits in the evaluation's `error` field, which the SDK model does not carry (`reason` stays `None`), so read it with `galtea evaluations get <id>`.
-- **`--include-legacy` is on by default, so lists mix revisions together.** Both `galtea test-cases list` and `galtea metrics list` return superseded revisions unless you turn the flag off, so a bare list shows rows the user thinks they replaced and any count overstates what is actually live. Pass it off whenever you report a count or show current state. To turn a boolean flag off use the `=` form -- `--include-legacy=false`; with `--include-legacy false` the word `false` becomes a positional argument and the list command fails with `accepts 0 arg(s), received 1`. The metric parameter is documented as "include legacy/deprecated metrics" and names no default, so do not tell a user Galtea deprecated their metric when their own revision superseded it.
-- **`galtea test-cases update` forks a new revision instead of updating.** Any change to evaluation content (`input`, `expectedOutput`, `context`, `expectedTools`, `scenario`, `userPersona`, `goal`, `stoppingCriterias`, `maxIterations`, `languageCode`, `gender`) retires the old row and returns a **new id**, so anything holding the old id now points at a superseded row -- compare the returned id to the one you sent to detect it. The new revision also **resets the human annotations** (`userScore`, `userScoreReason`, `reviewedById`), so warn the user before editing a reviewed test case. Annotation-only edits, `variant`, and no-op echoes update in place and fork nothing.
-- **`galtea metrics update` cannot change a judge.** It accepts only `name`, `description`, `tags`, `userGroupIds`, and `specificationIds`; anything else is refused. The refusal message names just the first three, so it reads as if the two link lists were blocked too. Each list is the full set: an id left out is unlinked. A judge prompt, evaluator model, or output schema changes only by creating a revision (`galtea metrics create parentMetricId: <id>`), which flips the parent to legacy.
-- **`galtea sync` is needed after API releases.** An unknown noun answers `unknown command "<x>" for "galtea"`; an unknown verb under a real noun just prints that noun's help with the verb missing from the list. If the docs say the command exists, the local spec cache is stale -- run `galtea sync` and retry.
-
-## Skill Feedback
-
-When the user expresses that something about this skill is not working as expected, gives incorrect guidance, is missing information, or could be improved -- offer to submit feedback to the skill maintainers. This includes when:
-
-- The skill gave wrong or outdated instructions
-- A workflow did not produce the expected result
-- The user wishes the skill covered something it does not
-- The user explicitly says something like "this should work differently" or "this is wrong"
-
-**Do NOT trigger this** for issues with the Galtea product itself -- only for issues with this skill's instructions and behavior. For product issues, direct the user to `support@galtea.ai`.
-
-When triggered, follow the process in [references/skill-feedback.md](references/skill-feedback.md).
+When the user says this skill gave wrong or outdated guidance, a workflow did not give the expected result, or the skill misses something, offer to send feedback to the skill maintainers. Follow [references/skill-feedback.md](references/skill-feedback.md). This is for the skill only: send problems with the Galtea product itself to `support@galtea.ai`.
 
 ## When not to use this skill
 
-- **Building the AI product itself.** This skill is for *evaluating* products, not authoring them.
-- **Pure UI browsing.** If the user just wants to look at results visually, point them at `https://platform.galtea.ai` instead of replaying the CLI chain.
-- **Hand-writing large amounts of test content.** Galtea generates test cases from specifications (see `/sdk/tutorials/writing-specifications`); prefer that, or upload test content the user already has ("Upload a dataset the user already has"). Writing a handful of rows into an empty dataset is fine.
+- **Building the AI product itself.** This skill evaluates products; it does not write them.
+- **Browsing results.** When the user only wants to look at results, point them to the Galtea dashboard.
