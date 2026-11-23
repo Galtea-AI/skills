@@ -9,6 +9,8 @@ on:
     branches: [main]
 
 # One run at a time, so a second merge reads the tag the first one created.
+# GitHub keeps one pending run and cancels older pending ones; the next run
+# still releases their entries, since it releases everything since the last tag.
 concurrency:
   group: merge-main
   cancel-in-progress: false
@@ -23,5 +25,4 @@ jobs:
       contents: write # passed to the block, which creates the tag and the release
     uses: ./.github/workflows/_release-galtea.yml
     with:
-      before_sha: ${{ github.event.before }}
       sha: ${{ github.sha }}

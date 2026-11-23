@@ -23,10 +23,10 @@ See [README.md](./README.md) for installation and prerequisites.
 
 ## Contributing
 
-Before you change `skills/galtea/`, read [CONTRIBUTING.md](./CONTRIBUTING.md).
+Before you change `skills/`, read [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 - A line stays in the skill only if no platform release can make it false.
-- A pull request that changes `skills/galtea/` adds exactly one entry, `changelog/<YYYYMMDD>-<HHMM>-<short-name>.md`: line 1 `major` or `patch`, line 2 empty, then what changes for the user's agent. Its merge releases the skill. The **📝 Changelog** check refuses a missing or malformed entry.
+- A pull request that changes `skills/` adds exactly one entry, `changelog/<YYYYMMDD>-<HHMM>-<short-name>.md`: line 1 `major` or `patch`, line 2 empty, then what changes for the user's agent. Its merge releases the skill. The **📝 Changelog** check refuses a missing or malformed entry, and an edit to a released one.
 
 ## Feedback
 
