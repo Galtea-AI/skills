@@ -6,7 +6,7 @@
 
 | Skill | Description |
 |---|---|
-| [galtea](./skills/galtea) | Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, datasets, metrics (including classifier metrics), endpoint-connections, runs and monitors, run and monitor evaluations, and inspect sessions, traces, and spans. |
+| [galtea](./skills/galtea) | Interact with the Galtea Platform. Authenticate, manage products, versions, specifications, datasets, metrics (including decision, formerly classifier, metrics), endpoint-connections, runs and monitors, run and monitor evaluations, and inspect sessions, traces, and spans. |
 
 ## Plugins
 
