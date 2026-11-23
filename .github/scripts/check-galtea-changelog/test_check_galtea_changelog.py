@@ -39,8 +39,8 @@ CASES = [
         1, "says nothing from line 3 on",
     ),
     (
-        "a change to another skill of the plugin without an entry fails",
-        {"skills/galtea-loop/SKILL.md": "loop\n"}, 1, "changes skills/ but adds no changelog entry",
+        "a change to another skill under skills/ without an entry fails",
+        {"skills/other/SKILL.md": "other\n"}, 1, "changes skills/ but adds no changelog entry",
     ),
     ("a change outside the skill with no entry passes", {"README.md": "readme\nmore\n"}, 0, "releases nothing"),
     (
